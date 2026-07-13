@@ -31,17 +31,29 @@ ssh <sandbox-name>.sbx
 
 ## Step 2 — Add the sandbox as an SSH connection in Codex
 
-In Codex, open **Settings → Connections → Add → Add manually**, then configure:
+In Codex, open **Settings** (account menu → Settings):
+
+![Open Settings in Codex](images/codex-open-settings.png)
+
+Go to **Connections → Add → Add manually**, then configure:
 
 - **Display name:** any friendly name
 - **Hostname:** `<sandbox-name>.sbx`
 
 Save the connection.
 
+![Add SSH connection dialog](images/codex-add-ssh-connection.png)
+
 ## Step 3 — Create a Remote Project
 
-Create a **New Remote Project**, select the SSH connection from Step 2, and choose the project
-directory inside the sandbox. Then start coding.
+Create a new project and choose the **Remote** project type:
+
+![Create project — Remote](images/codex-create-project-remote.png)
+
+Select the SSH connection from Step 2 as the remote host, pick the project directory inside the
+sandbox, and click **Add project**. Then start coding.
+
+![New remote project dialog](images/codex-new-remote-project.png)
 
 ## Working with multiple projects
 
