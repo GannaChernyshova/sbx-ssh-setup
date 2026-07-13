@@ -9,13 +9,14 @@ sandboxed workspace as a Remote Project.
 ## Prerequisites
 
 - `sbx` 0.35.0+
-- SSH feature enabled. `sbx_ssh_setup.sh` / `sbx_ssh_setup.ps1` does this for you on first run
-  (enables `platform.allowExperimentalFeatures` and `feature.ssh`, restarts the daemon, and runs
-  `sbx ssh setup`). `sbx ssh setup` only needs to run once.
 
 ## Step 1 — Create the sandbox
 
-From your project directory, run the setup script with the `codex` agent:
+`sbx_ssh_setup.sh` / `sbx_ssh_setup.ps1` handles everything in one call: on first run it enables
+the SSH feature (`platform.allowExperimentalFeatures`, `feature.ssh`), restarts the daemon, and
+runs `sbx ssh setup` (once); on every run it creates the sandbox for the chosen agent.
+
+From your project directory, run it with the `codex` agent:
 
 ```bash
 cd <your-project>
