@@ -46,8 +46,9 @@ Create a new project and choose the **Remote** project type:
 
 ![Create project — Remote](images/codex-create-project-remote.png)
 
-Select the SSH connection from Step 2 as the remote host, pick the project directory inside the
-sandbox, and click **Add project**. Then start coding.
+Select the SSH connection from Step 2 as the remote host, then pick the project directory inside
+the sandbox — this is the same directory the sandbox was started from (mounted at the same path
+inside the sandbox). Click **Add project**, then start coding.
 
 ![New remote project dialog](images/codex-new-remote-project.png)
 
