@@ -8,6 +8,15 @@ named after the current directory. Pick the script for your platform.
 | macOS / Linux | `sbx_ssh_setup.sh`   | `sbx_list.sh`   | `sbx_teardown.sh`   |
 | Windows       | `sbx_ssh_setup.ps1`  | `sbx_list.ps1`  | `sbx_teardown.ps1`  |
 
+## Connecting an agent GUI
+
+Per-agent guides for connecting the desktop UI to the sandbox over SSH:
+
+| Agent  | Guide                          |
+|--------|--------------------------------|
+| Codex  | [docs/codex.md](docs/codex.md)   |
+| Cursor | [docs/cursor.md](docs/cursor.md) |
+
 ## What it does
 
 1. **Preflight:** verifies `sbx` is installed and ≥ 0.35.0, and that Docker is running.
@@ -67,12 +76,3 @@ Remove a sandbox and its resources (defaults to the current directory's sandbox)
 ./sbx_teardown.sh [name]     # Windows: .\sbx_teardown.ps1 [name]
 ```
 To only stop (keep) a sandbox instead of removing it: `sbx stop <name>`.
-
-## Connecting an agent GUI
-
-Per-agent guides for connecting the desktop UI to the sandbox over SSH:
-
-| Agent  | Guide                          |
-|--------|--------------------------------|
-| Codex  | [docs/codex.md](docs/codex.md)   |
-| Cursor | [docs/cursor.md](docs/cursor.md) |
