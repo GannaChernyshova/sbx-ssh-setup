@@ -10,6 +10,18 @@ sandboxed workspace as a Remote Project.
 
 - `sbx` 0.35.0+
 
+## One-time — authenticate with OpenAI (SSO)
+
+Codex needs OpenAI credentials to run in the sandbox. Authenticate **once per machine** with your
+OpenAI SSO account (global secret, shared by every sandbox):
+
+```bash
+sbx secret set -g openai --oauth
+```
+
+This opens a browser to complete SSO login. You only need to do this once; you don't repeat it per
+project. (If Codex connects but nothing happens when you run a task, this step was skipped.)
+
 ## Step 1 — Create the sandbox
 
 `sbx_ssh_setup.sh` / `sbx_ssh_setup.ps1` handles everything in one call: on first run it enables
@@ -23,7 +35,9 @@ cd <your-project>
 ./sbx_ssh_setup.sh codex        # Windows: .\sbx_ssh_setup.ps1 codex
 ```
 
-The sandbox is named after the directory. Verify SSH connectivity:
+The sandbox is named after the directory (sanitized to lowercase). The script verifies SSH
+connectivity and prints the exact **Display name** and **Hostname** to paste into Codex in Step 2
+(copying the hostname to your clipboard). You can also verify manually:
 
 ```bash
 ssh <sandbox-name>.sbx

@@ -3,19 +3,22 @@
 Provisions an SSH-accessible [`sbx`](https://docs.docker.com/ai/sandboxes/get-started/) sandbox
 named after the current directory. Pick the script for your platform.
 
-| Platform      | Script               |
-|---------------|----------------------|
-| macOS / Linux | `sbx_ssh_setup.sh`   |
-| Windows       | `sbx_ssh_setup.ps1`  |
+| Platform      | Setup                | List            | Teardown            |
+|---------------|----------------------|-----------------|---------------------|
+| macOS / Linux | `sbx_ssh_setup.sh`   | `sbx_list.sh`   | `sbx_teardown.sh`   |
+| Windows       | `sbx_ssh_setup.ps1`  | `sbx_list.ps1`  | `sbx_teardown.ps1`  |
 
 ## What it does
 
-1. Derives the sandbox name from the current directory's basename.
-2. On first run only (tracked by `~/.sbx_features_enabled`):
+1. **Preflight:** verifies `sbx` is installed and ≥ 0.35.0, and that Docker is running.
+2. Derives the sandbox name from the current directory (sanitized to lowercase, safe characters).
+3. On first run only (tracked by `~/.sbx_features_enabled`):
    enables `platform.allowExperimentalFeatures` and `feature.ssh`,
    restarts the `sbx` daemon, and runs `sbx ssh setup`.
-3. Creates the sandbox from the chosen AI agent template (required first argument).
-4. Prints the SSH connection command.
+4. Creates the sandbox from the chosen AI agent template (required first argument), skipping
+   creation if a sandbox with that name already exists.
+5. Verifies SSH connectivity, then prints copy-paste-ready Codex values (Display name + Hostname)
+   and copies the hostname to the clipboard.
 
 ## Requirements
 
@@ -51,6 +54,19 @@ ssh <directory-name>.sbx
 ```
 
 To re-run the one-time setup: `rm ~/.sbx_features_enabled` (Windows: `del %USERPROFILE%\.sbx_features_enabled`).
+
+## Managing sandboxes
+
+List running sandboxes and their SSH hostnames:
+```bash
+./sbx_list.sh            # Windows: .\sbx_list.ps1
+```
+
+Remove a sandbox and its resources (defaults to the current directory's sandbox):
+```bash
+./sbx_teardown.sh [name]     # Windows: .\sbx_teardown.ps1 [name]
+```
+To only stop (keep) a sandbox instead of removing it: `sbx stop <name>`.
 
 ## Connecting an agent GUI
 
