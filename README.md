@@ -72,6 +72,7 @@ To only stop (keep) a sandbox instead of removing it: `sbx stop <name>`.
 
 Per-agent guides for connecting the desktop UI to the sandbox over SSH:
 
-| Agent  | Guide                        |
-|--------|------------------------------|
-| Codex  | [docs/codex.md](docs/codex.md) |
+| Agent  | Guide                          |
+|--------|--------------------------------|
+| Codex  | [docs/codex.md](docs/codex.md)   |
+| Cursor | [docs/cursor.md](docs/cursor.md) |
