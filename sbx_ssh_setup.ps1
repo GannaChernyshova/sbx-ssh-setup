@@ -1,5 +1,9 @@
 #Requires -Version 5.1
 # Windows (PowerShell) equivalent of sbx_ssh_setup.sh
+param(
+    # AI agent / template to provision (e.g. codex, cursor, claude). Defaults to codex.
+    [string]$Agent = "codex"
+)
 $ErrorActionPreference = "Stop"
 
 # Derive sandbox name from the current directory (use as-is, no suffix)
@@ -7,6 +11,7 @@ $SbxName = Split-Path -Leaf (Get-Location).Path
 
 Write-Host "==> Project directory : $((Get-Location).Path)"
 Write-Host "==> Sandbox name      : $SbxName"
+Write-Host "==> AI agent          : $Agent"
 Write-Host ""
 
 # One-time setup: enable features + restart daemon
@@ -32,8 +37,8 @@ if (-not (Test-Path $FlagFile)) {
 
 # Create the sandbox
 Write-Host ""
-Write-Host "==> Creating sandbox '$SbxName' with the Codex template..."
-sbx run codex --name $SbxName
+Write-Host "==> Creating sandbox '$SbxName' with the '$Agent' template..."
+sbx run $Agent --name $SbxName
 
 Write-Host ""
 Write-Host "OK Sandbox '$SbxName' is ready. Connect with:"

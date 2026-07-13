@@ -4,12 +4,16 @@ set -e
 # Ensure Homebrew binaries are on PATH (required on Apple Silicon Macs)
 export PATH="/opt/homebrew/bin:$PATH"
 
+# AI agent / template to provision (e.g. codex, cursor, claude). Defaults to codex.
+AGENT="${1:-codex}"
+
 # Derive sandbox name from the current project directory (use as-is, no suffix)
 PROJECT_DIR=$(basename "$PWD")
 SBX_NAME="${PROJECT_DIR}"
 
 echo "==> Project directory : $PWD"
 echo "==> Sandbox name      : $SBX_NAME"
+echo "==> AI agent          : $AGENT"
 echo ""
 
 # ── One-time setup: enable features + restart daemon ────────────────────────
@@ -35,8 +39,8 @@ fi
 
 # ── Create the sandbox ───────────────────────────────────────────────────────
 echo ""
-echo "==> Creating sandbox '$SBX_NAME' with the Codex template..."
-sbx run codex --name "$SBX_NAME"
+echo "==> Creating sandbox '$SBX_NAME' with the '$AGENT' template..."
+sbx run "$AGENT" --name "$SBX_NAME"
 
 echo ""
 echo "✓ Sandbox '$SBX_NAME' is ready. Connect with:"
