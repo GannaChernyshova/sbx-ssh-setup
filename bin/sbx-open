@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+#
+# sbx-open — the golden path: open a project in the Codex desktop app, safely
+# sandboxed.
+#
+# Creates (or reuses) exactly one Docker Sandbox for a project directory, makes
+# the Codex GUI auto-discover it over SSH, launches the app, and hands you the
+# exact values for the one remaining supported click. Idempotent: run it twice
+# on the same path and it just reopens the same sandbox.
+#
+#   sbx-open ~/src/acme-api
+#   sbx-open codex ~/src/acme-api      # agent named explicitly (same result)
+#
+set -euo pipefail
+
+# --- locate our libs (works from the repo and from an installed prefix) ----
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do _self="$(readlink "$_self")"; done
+_bindir="$(cd "$(dirname "$_self")" && pwd)"
+for _cand in "${SBX_CODEX_LIB:-}" "$_bindir/../lib/sbx-codex" "$_bindir/../lib"; do
+  if [[ -n "$_cand" && -f "$_cand/common.sh" ]]; then _LIB="$_cand"; break; fi
+done
+[[ -n "${_LIB:-}" ]] || { echo "sbx-open: cannot locate lib/ (common.sh)" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+source "$_LIB/common.sh"
+# shellcheck source=lib/sbx-interface.sh
+source "$_LIB/sbx-interface.sh"
+# shellcheck source=lib/codex.sh
+source "$_LIB/codex.sh"
+
+PROG="sbx-open"
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} — open a project in the Codex desktop app, isolated in a Docker Sandbox
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG [codex] <path> [--name <name>] [options]
+
+${C_BOLD}ARGUMENTS${C_RESET}
+  codex              Optional agent/template name (default: ${SBX_DEFAULT_AGENT}).
+  <path>             Project directory to mount (the ONLY shared surface).
+
+${C_BOLD}OPTIONS${C_RESET}
+  --name <name>      Sandbox name (default: derived from the directory name).
+  --no-launch        Prepare/verify the sandbox but do not launch Codex.
+  --dry-run          Show what would happen; make no changes.
+  -h, --help         Show this help.
+  -V, --version      Print the toolkit version.
+
+${C_BOLD}EXAMPLES${C_RESET}
+  $PROG ~/src/acme-api
+  $PROG codex ~/src/acme-api
+  $PROG . --no-launch
+
+${C_BOLD}RULES${C_RESET}
+  • One sandbox per project. Mount the repo — never \$HOME or a parent of many
+    repos. The mount is the entire blast radius of the agent.
+  • Always start from $PROG; do not hand-type sandbox names into Codex.
+EOF
+}
+
+# --- argument parsing ------------------------------------------------------
+PATH_ARG=""
+NAME=""
+AGENT="$SBX_DEFAULT_AGENT"
+NO_LAUNCH=0
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -V|--version) printf '%s %s\n' "$PROG" "$(toolkit_version)"; exit 0 ;;
+    --name)    NAME="${2:?--name needs a value}"; shift 2 ;;
+    --agent)   AGENT="${2:?--agent needs a value}"; shift 2 ;;
+    --no-launch|--no-cursor) NO_LAUNCH=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --) shift; break ;;
+    -*) die "unknown option: $1  (try --help)" ;;
+    *)
+      # First bare word may be the agent (e.g. `sbx-open codex ~/x`); the next
+      # bare word is the path. A single bare word is always the path.
+      if [[ -z "$PATH_ARG" && -z "${_SEEN_FIRST:-}" && ! -e "$1" && "$1" != /* && "$1" != .* && "$1" != ~* ]]; then
+        # Looks like an agent token, not a path — only if another arg follows.
+        if [[ $# -ge 2 && "${2:0:1}" != "-" ]]; then AGENT="$1"; _SEEN_FIRST=1; shift; continue; fi
+      fi
+      [[ -z "$PATH_ARG" ]] || die "unexpected extra argument: $1"
+      PATH_ARG="$1"; shift ;;
+  esac
+done
+
+[[ -n "$PATH_ARG" ]] || { usage; exit 2; }
+
+# --- preflight -------------------------------------------------------------
+sbx_present || die "'$SBX_BIN' not found on PATH. Install the sbx CLI, then run: sbx-doctor"
+
+_v="$(sbx_version || true)"
+if [[ -n "$_v" ]] && ! version_ge "$_v" "$SBX_MIN_VERSION"; then
+  die "sbx $_v is older than required $SBX_MIN_VERSION — update Docker Sandboxes."
+fi
+
+if have docker; then
+  docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start Docker Desktop and re-run."
+fi
+
+WS="$(abspath "$PATH_ARG")"
+[[ -d "$WS" ]] || die "not a directory: $WS"
+
+# Guard against over-broad mounts (the #1 way to widen the blast radius).
+if [[ "$WS" == "$HOME" ]]; then
+  die "refusing to mount your entire home directory ($HOME). Mount a specific project."
+fi
+
+# --- name derivation + collision handling ----------------------------------
+name_explicit=0
+if [[ -n "$NAME" ]]; then
+  name_explicit=1
+  NAME="$(sanitize_name "$NAME")"
+else
+  NAME="$(sanitize_name "$(basename "$WS")")"
+fi
+
+# classify <name> : reuse | mismatch | orphan (only when the name exists).
+classify() {
+  local n="$1" existing_ws
+  existing_ws="$(sbx_workspace "$n")"
+  if [[ -z "$existing_ws" ]]; then echo "orphan"
+  elif [[ "$existing_ws" == "$WS" ]]; then echo "reuse"
+  else echo "mismatch"; fi
+}
+
+resolve_name() {
+  local base="$NAME" n="$NAME" i=1
+  while sbx_exists "$n"; do
+    case "$(classify "$n")" in
+      reuse) NAME="$n"; return 0 ;;
+      orphan)
+        if [[ "$name_explicit" == 1 ]]; then
+          err "Sandbox '$n' exists but has NO workspace mount (orphan)."
+          hint "Remove it, then retry:"
+          cmd "sbx-clean               # interactive cleanup"
+          cmd "$SBX_BIN $SBX_CMD_RM $n"
+          exit 1
+        fi
+        n="${base}-$((++i))" ;;
+      mismatch)
+        if [[ "$name_explicit" == 1 ]]; then
+          err "Sandbox '$n' already exists for a DIFFERENT workspace:"
+          hint "existing: $(sbx_workspace "$n")"
+          hint "you asked for: $WS"
+          cmd "$PROG '$(sbx_workspace "$n")'    # open the existing one"
+          cmd "$PROG '$WS' --name ${base}-2     # new sandbox for this path"
+          exit 1
+        fi
+        n="${base}-$((++i))" ;;
+    esac
+  done
+  NAME="$n"
+}
+
+resolve_name
+SSH_HOST="$(ssh_host "$NAME")"
+
+echo "" >&2
+info "Project : $WS"
+info "Sandbox : ${C_BOLD}$NAME${C_RESET}   (agent: $AGENT, host: $SSH_HOST)"
+
+# --- one-time SSH enablement ----------------------------------------------
+if ! sbx_features_enabled; then
+  if [[ "$DRY_RUN" == 1 ]]; then
+    info "[dry-run] would enable the SSH feature (one-time):"
+    while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
+  else
+    info "First-time setup: enabling the sbx SSH feature (one-time, ~20s)…"
+    sbx_enable_ssh_feature
+    success "SSH feature enabled."
+  fi
+fi
+
+# --- OpenAI credentials (Codex runs inside the sandbox) -------------------
+if [[ "$DRY_RUN" != 1 ]] && ! sbx_openai_secret_set; then
+  warn "No global 'openai' secret found — Codex needs OpenAI credentials inside the sandbox."
+  hint "Authenticate once per machine (opens a browser):"
+  cmd "$SBX_BIN secret set -g $SBX_OPENAI_SECRET --oauth"
+  hint "You can do this now in another terminal, then re-run $PROG. Continuing anyway…"
+fi
+
+# --- create or reuse -------------------------------------------------------
+created=0
+if sbx_exists "$NAME"; then
+  status="$(sbx_status "$NAME")"
+  if [[ "$status" != "running" ]]; then
+    if [[ "$DRY_RUN" == 1 ]]; then
+      info "[dry-run] would wake stopped sandbox: $SBX_BIN $SBX_CMD_RUN $SBX_RUN_DETACH_FLAG --name $NAME"
+    else
+      info "Waking stopped sandbox (detached)…"
+      sbx_ensure_running "" "$NAME" ""
+    fi
+  else
+    info "Reusing running sandbox."
+  fi
+else
+  if [[ "$DRY_RUN" == 1 ]]; then
+    info "[dry-run] would create (detached): $(sbx_ensure_running_cmd "$AGENT" "$NAME" "$WS")"
+  else
+    info "Creating sandbox (detached)…"
+    sbx_ensure_running "$AGENT" "$NAME" "$WS"
+    created=1
+  fi
+fi
+
+# --- SSH reachability ------------------------------------------------------
+if [[ "$DRY_RUN" == 1 ]]; then
+  info "[dry-run] would verify SSH: $SSH_BIN $SSH_HOST"
+else
+  if ! ssh_reachable "$NAME"; then
+    err "Sandbox '$NAME' is not reachable over SSH ($SSH_HOST)."
+    hint "It may still be starting — wait a few seconds and retry:"
+    cmd "$PROG '$WS'"
+    hint "Or diagnose everything at once with: sbx-doctor"
+    exit 1
+  fi
+  success "SSH reachable: $SSH_HOST"
+fi
+
+# --- make Codex auto-discover the host (concrete SSH alias) ----------------
+if [[ "$DRY_RUN" == 1 ]]; then
+  info "[dry-run] would add a concrete Host alias for '$SSH_HOST' to $SSH_CONFIG_FILE"
+else
+  codex_ssh_add_alias "$NAME"
+  success "Codex will now auto-discover this host ($SSH_HOST)."
+fi
+
+# --- resolve in-container folder path --------------------------------------
+if [[ "$DRY_RUN" == 1 ]]; then
+  CPATH="$WS"
+else
+  if CPATH="$(container_ws_path "$NAME" "$WS")"; then :; else
+    warn "Could not confirm the in-container folder path; using best guess."
+  fi
+fi
+
+# --- launch Codex + hand off the final supported click ---------------------
+launch_note="the Codex desktop app"
+if [[ "$NO_LAUNCH" == 1 || "$DRY_RUN" == 1 ]]; then
+  [[ "$DRY_RUN" == 1 ]] && info "[dry-run] would launch the Codex desktop app"
+else
+  if codex_app_present; then
+    codex_launch || warn "Could not auto-launch Codex — open it yourself."
+  else
+    warn "Codex desktop app not detected — install it, then open it yourself."
+    launch_note="Codex (once installed)"
+  fi
+fi
+
+# Copy the folder path so the final step is paste-only.
+clip_note=""
+if [[ "$DRY_RUN" != 1 ]] && printf '%s' "$CPATH" | clip_copy; then
+  clip_note="   (copied to clipboard)"
+fi
+
+cat >&2 <<EOF
+
+${C_GREEN}✅ Sandbox '$NAME' is ready.${C_RESET}
+
+${C_BOLD}Last step in $launch_note${C_RESET} — New remote project:
+   1. Pick the host from the list:   ${C_BOLD}$SSH_HOST${C_RESET}
+   2. Choose the project folder:     ${C_BOLD}$CPATH${C_RESET}$clip_note
+   3. Click ${C_BOLD}Add project${C_RESET} and start working.
+
+Screenshots for these clicks: docs/codex.md
+EOF
+
+if [[ "$DRY_RUN" != 1 && "$created" == 1 ]]; then
+  success "New sandbox '$NAME' created."
+fi

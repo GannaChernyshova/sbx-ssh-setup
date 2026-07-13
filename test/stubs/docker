@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Stub `docker` for the smoke test: `docker info` succeeds.
+set -euo pipefail
+case "${1:-}" in
+  info) echo "stub docker: running" ;;
+  *)    : ;;
+esac
+exit 0

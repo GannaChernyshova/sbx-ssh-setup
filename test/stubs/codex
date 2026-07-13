@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stub `codex` CLI presence for the smoke test (makes codex_app_present true on
+# Linux). Does nothing useful.
+set -euo pipefail
+exit 0

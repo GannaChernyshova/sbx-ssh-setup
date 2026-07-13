@@ -1,77 +1,95 @@
-# sbx-ssh-setup
+# sbx-codex
 
-Provisions an SSH-accessible [`sbx`](https://docs.docker.com/ai/sandboxes/get-started/) sandbox
-named after the current directory. Pick the script for your platform.
+**Give non-technical staff a safe, one-command way to use the OpenAI Codex desktop app —
+with the agent running inside a throwaway Docker Sandbox instead of on their laptop.**
 
-| Platform      | Setup                | List            | Teardown            |
-|---------------|----------------------|-----------------|---------------------|
-| macOS / Linux | `sbx_ssh_setup.sh`   | `sbx_list.sh`   | `sbx_teardown.sh`   |
-| Windows       | `sbx_ssh_setup.ps1`  | `sbx_list.ps1`  | `sbx_teardown.ps1`  |
+`sbx-codex` turns [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/get-started/) (the `sbx`
+CLI, v0.35+) into the default way to open a project in Codex. One command creates (or reuses)
+exactly one sandbox per project, makes Codex **auto-discover** it over SSH, launches the app, and
+hands the user the exact values for the final click. The agent, its file access, and every command
+it runs stay *inside* the sandbox — the only shared surface with the machine is the single folder
+you pointed at.
 
-## What it does
+```bash
+sbx-open codex ~/src/acme-api      # create/reuse a sandbox and open it in Codex
+```
 
-1. **Preflight:** verifies `sbx` is installed and ≥ 0.35.0, and that Docker is running.
-2. Derives the sandbox name from the current directory (sanitized to lowercase, safe characters).
-3. On first run only (tracked by `~/.sbx_features_enabled`):
-   enables `platform.allowExperimentalFeatures` and `feature.ssh`,
-   restarts the `sbx` daemon, and runs `sbx ssh setup`.
-4. Creates the sandbox from the chosen AI agent template (required first argument), skipping
-   creation if a sandbox with that name already exists.
-5. Verifies SSH connectivity, then prints copy-paste-ready Codex values (Display name + Hostname)
-   and copies the hostname to the clipboard.
+Built for a **Director of IT** to deploy to **knowledge workers**: minimal typing, self-diagnosing,
+safe by default, deployable via MDM, and nothing that breaks on a Codex auto-update. For the
+deployment playbook (Jamf/Intune, signing, secrets, network policy) see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## Requirements
+## What's automated (and the one click that isn't)
 
-- `sbx` CLI installed and on `PATH` — see [Docker Sandboxes: Get started](https://docs.docker.com/ai/sandboxes/get-started/).
-- macOS/Linux: `bash` (macOS also assumes Homebrew at `/opt/homebrew/bin`).
-- Windows: PowerShell 5.1+.
+| Step | Automated? | Notes |
+|------|:---------:|-------|
+| Create / reuse a per-project sandbox | ✅ | Idempotent; refuses footguns (mounting `$HOME`, orphans, name collisions). |
+| Enable the sbx SSH feature (one-time) | ✅ | Done automatically on first run. |
+| Make Codex **discover** the sandbox host | ✅ | We add a *concrete* SSH alias — Codex ignores the `Host *.sbx` pattern `sbx` writes. |
+| Launch the Codex desktop app | ✅ | Plus the host name + folder path are copied to your clipboard. |
+| **Create the remote *project*** | ⚠️ **one manual click** | Codex has no supported CLI/deep-link for this ([openai/codex#21554](https://github.com/openai/codex/issues/21554)). We stop at the app's *New remote project* screen rather than hacking the app's private state file, which breaks on updates. |
 
-## Usage
+The final step is: **New remote project → pick the auto-discovered host → paste the folder → Add
+project.** Screenshots: [docs/codex.md](docs/codex.md).
 
-Run from inside the project directory you want as the sandbox name. Pass the AI agent
-template as the first argument (required, e.g. `codex`, `cursor`, `claude`).
+## Install
 
 **macOS / Linux**
 ```bash
-chmod +x sbx_ssh_setup.sh
-./sbx_ssh_setup.sh codex
-./sbx_ssh_setup.sh cursor
-./sbx_ssh_setup.sh claude
+./install.sh            # installs to ~/.local/bin, then runs sbx-doctor
+make install            # same thing
 ```
 
 **Windows (PowerShell)**
 ```powershell
-# once, if scripts are blocked:
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-.\sbx_ssh_setup.ps1 codex
-.\sbx_ssh_setup.ps1 cursor
-.\sbx_ssh_setup.ps1 claude
+powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
-Then connect:
+Both installers are idempotent and version-aware — re-run them to upgrade in place. Every command
+reports `--version` / `-Version`.
+
+### Least-technical users: double-click launchers
+
+`launchers/` contains **Open in Codex.command** (macOS) and **Open in Codex.bat** (Windows). No
+commands to type: double-click (macOS) and drag your project folder in, or drag a folder onto the
+`.bat` (Windows). They just wrap `sbx-open`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `sbx-open [codex] <path>` | The golden path. Create-or-reuse one sandbox per project, make Codex discover it, launch the app. Idempotent. |
+| `sbx-doctor` | Health check with ✅/❌ and the exact fix per failure. `--verify` validates the toolkit's host assumptions. |
+| `sbx-ls` | Human-friendly sandbox list; flags orphans and stopped sandboxes. |
+| `sbx-clean` | Remove orphan/stopped sandboxes **and** prune their SSH aliases (`--dry-run`, `--yes`). |
+
+Windows uses the same names (`sbx-open`, `sbx-doctor`, …) via `.cmd` shims; PowerShell-native flags
+use a single dash (`-DryRun`, `-OrphansOnly`).
+
+## Requirements
+
+- `sbx` CLI on `PATH`, v0.35+ — see [Docker Sandboxes: Get started](https://docs.docker.com/ai/sandboxes/get-started/).
+- Docker running.
+- The **OpenAI Codex desktop app** installed.
+- A one-time OpenAI login for the sandbox (Codex runs *inside* it):
+  ```bash
+  sbx secret set -g openai --oauth
+  ```
+  `sbx-open` and `sbx-doctor` detect if this is missing and tell you.
+
+## How it stays safe
+
+- **Blast radius = one folder.** Only the path you pass is mounted. `sbx-open` refuses to mount your
+  home directory.
+- **One sandbox per project**, reused on re-run. Collisions are resolved, not silently merged.
+- **No secrets in this repo.** OpenAI/GitHub credentials are `sbx` secrets provisioned per machine.
+- **No unsupported hacks.** We never write Codex's private state files.
+
+## Development
+
 ```bash
-ssh <directory-name>.sbx
+make check      # shellcheck + a hermetic smoke test (stub sbx/ssh/codex — no real Docker)
+make help       # list targets
 ```
 
-To re-run the one-time setup: `rm ~/.sbx_features_enabled` (Windows: `del %USERPROFILE%\.sbx_features_enabled`).
-
-## Managing sandboxes
-
-List running sandboxes and their SSH hostnames:
-```bash
-./sbx_list.sh            # Windows: .\sbx_list.ps1
-```
-
-Remove a sandbox and its resources (defaults to the current directory's sandbox):
-```bash
-./sbx_teardown.sh [name]     # Windows: .\sbx_teardown.ps1 [name]
-```
-To only stop (keep) a sandbox instead of removing it: `sbx stop <name>`.
-
-## Connecting an agent GUI
-
-Per-agent guides for connecting the desktop UI to the sandbox over SSH:
-
-| Agent  | Guide                        |
-|--------|------------------------------|
-| Codex  | [docs/codex.md](docs/codex.md) |
+On Windows, validate the PowerShell with `Invoke-ScriptAnalyzer -Path win -Recurse`.

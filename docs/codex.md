@@ -1,80 +1,78 @@
-# Connecting the Codex UI to a sandbox
+# Connecting the Codex desktop app to a sandbox
 
-Connect the Codex desktop app to an `sbx` sandbox over SSH, so Codex runs against the
-sandboxed workspace as a Remote Project.
+`sbx-open` does everything up to the last screen for you. This page shows what it automates and the
+one manual step that Codex does not yet expose to automation.
 
-> **One sandbox per project.** Before creating a Remote Project in Codex, start a dedicated
-> sandbox for that project, add it as an SSH connection, then associate it with the project.
+> **One sandbox per project.** `sbx-open` creates a dedicated sandbox per project directory and adds
+> a matching SSH host that Codex auto-discovers.
 
 ## Prerequisites
 
-- `sbx` 0.35.0+
+- `sbx` 0.35.0+ and Docker running.
+- The OpenAI Codex desktop app installed.
+- A one-time OpenAI login for the sandbox (Codex runs *inside* it):
+  ```bash
+  sbx secret set -g openai --oauth
+  ```
+  This opens a browser once per machine; it is shared by every sandbox. If Codex connects but
+  nothing happens when you run a task, this step was skipped. `sbx-doctor` flags it.
 
-## One-time — authenticate with OpenAI (SSO)
+## The one command
 
-Codex needs OpenAI credentials to run in the sandbox. Authenticate **once per machine** with your
-OpenAI SSO account (global secret, shared by every sandbox):
-
-```bash
-sbx secret set -g openai --oauth
-```
-
-This opens a browser to complete SSO login. You only need to do this once; you don't repeat it per
-project. (If Codex connects but nothing happens when you run a task, this step was skipped.)
-
-## Step 1 — Create the sandbox
-
-`sbx_ssh_setup.sh` / `sbx_ssh_setup.ps1` handles everything in one call: on first run it enables
-the SSH feature (`platform.allowExperimentalFeatures`, `feature.ssh`), restarts the daemon, and
-runs `sbx ssh setup` (once); on every run it creates the sandbox for the chosen agent.
-
-From your project directory, run it with the `codex` agent:
+From anywhere, point `sbx-open` at your project:
 
 ```bash
-cd <your-project>
-./sbx_ssh_setup.sh codex        # Windows: .\sbx_ssh_setup.ps1 codex
+sbx-open codex ~/src/acme-api        # Windows: sbx-open codex C:\src\acme-api
 ```
 
-The sandbox is named after the directory (sanitized to lowercase). The script verifies SSH
-connectivity and prints the exact **Display name** and **Hostname** to paste into Codex in Step 2
-(copying the hostname to your clipboard). You can also verify manually:
+On first run it enables the sbx SSH feature (once), then on every run it:
 
-```bash
-ssh <sandbox-name>.sbx
+1. Creates or reuses the sandbox for that folder (named after the directory).
+2. Verifies SSH connectivity.
+3. Adds a **concrete** SSH host alias so the Codex app auto-discovers it.
+   *(Codex ignores the `Host *.sbx` wildcard that `sbx ssh setup` writes — the concrete alias is
+   what makes the host appear in Codex.)*
+4. Launches the Codex desktop app and copies the project folder path to your clipboard.
+
+It prints the two values you need next:
+
+```
+Last step in the Codex desktop app — New remote project:
+   1. Pick the host from the list:   acme-api.sbx
+   2. Choose the project folder:     /Users/you/src/acme-api   (copied to clipboard)
+   3. Click Add project and start working.
 ```
 
-## Step 2 — Add the sandbox as an SSH connection in Codex
+## The last step (manual): create the remote project
 
-In Codex, open **Settings → Connections → Add → Add manually**, then configure:
+Codex has no supported CLI or deep link to register a remote project
+([openai/codex#21554](https://github.com/openai/codex/issues/21554)), so this stays a few clicks in
+the app. It is quick:
 
-- **Display name:** any friendly name
-- **Hostname:** `<sandbox-name>.sbx`
-
-Save the connection.
-
-![Add SSH connection dialog](images/codex-add-ssh-connection.png)
-
-## Step 3 — Create a Remote Project
-
-Create a new project and choose the **Remote** project type:
+**1. Start a new remote project.**
 
 ![Create project — Remote](images/codex-create-project-remote.png)
 
-Select the SSH connection from Step 2 as the remote host, then pick the project directory inside
-the sandbox — this is the same directory the sandbox was started from (mounted at the same path
-inside the sandbox). Click **Add project**, then start coding.
+**2. Pick the host `sbx-open` printed** (e.g. `acme-api.sbx`) from the auto-discovered list. You do
+**not** need "Add manually" — the host is already there because `sbx-open` added the concrete alias.
+
+![Connections / pick host](images/codex-add-ssh-connection.png)
+
+**3. Choose the project folder** — paste the path from your clipboard (it is the same directory the
+sandbox was started from, mounted at the same path inside the sandbox). Click **Add project**.
 
 ![New remote project dialog](images/codex-new-remote-project.png)
 
+Start coding — the agent now runs entirely inside the sandbox.
+
 ## Working with multiple projects
 
-Repeat the flow per project — one sandbox each:
+Repeat per project — one sandbox each:
 
-```
-Create project → Start a new sbx → Add SSH connection in Codex → Create Remote Project → Start coding
+```bash
+sbx-open codex ~/src/acme-api
+sbx-open codex ~/src/beta-service
 ```
 
-1. Navigate to the new project directory.
-2. Start a new sandbox (`./sbx_ssh_setup.sh codex`).
-3. Add the sandbox as a new SSH connection in Codex.
-4. Create a new Remote Project using that connection.
+`sbx-ls` shows them all; `sbx-clean` reclaims the ones you're done with (and prunes their SSH
+aliases). If anything looks off, run `sbx-doctor`.

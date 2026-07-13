@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stub `ssh` for the smoke test: every connection/probe succeeds silently.
+set -euo pipefail
+# Drain options; the trailing command (e.g. `true`, `test -d …`) is ignored.
+exit 0

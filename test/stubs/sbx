@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Stub `sbx` for the smoke test. Keeps sandbox state in $SBX_STUB_STATE
+# (TSV: name<TAB>agent<TAB>status<TAB>workspace). No real Docker involved.
+set -euo pipefail
+state="${SBX_STUB_STATE:?SBX_STUB_STATE must be set}"
+[[ -f "$state" ]] || : > "$state"
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  version|--version) echo "sbx version 0.35.2" ;;
+  settings|daemon)   : ;;                      # settings set … / daemon stop|start
+  ssh)               : ;;                      # ssh setup
+  secret)
+    [[ "${1:-}" == "ls" ]] && echo "openai"    # global secret present
+    ;;
+  ls)
+    printf '%-12s %-8s %-9s %-10s %s\n' SANDBOX AGENT STATUS PORTS WORKSPACE
+    while IFS=$'\t' read -r n a s w; do
+      [[ -n "$n" ]] || continue
+      printf '%-12s %-8s %-9s %-10s %s\n' "$n" "$a" "$s" "" "$w"
+    done < "$state"
+    ;;
+  run)
+    agent=""; name=""; path=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --detached|-d) shift ;;
+        --name) name="${2:-}"; shift 2 ;;
+        -*) shift ;;
+        *) if [[ -z "$agent" ]]; then agent="$1"; else path="$1"; fi; shift ;;
+      esac
+    done
+    if grep -qP "^${name}\t" "$state" 2>/dev/null || grep -q "^${name}	" "$state"; then
+      # wake: mark running
+      tmp="$(mktemp)"; awk -F'\t' -v n="$name" 'BEGIN{OFS="\t"} $1==n{$3="running"} {print}' "$state" > "$tmp"; mv "$tmp" "$state"
+    else
+      printf '%s\t%s\t%s\t%s\n' "$name" "${agent:-codex}" "running" "$path" >> "$state"
+    fi
+    echo "sbx-id-$name"
+    ;;
+  exec)
+    name="${1:-}"
+    ws="$(awk -F'\t' -v n="$name" '$1==n{print $4}' "$state")"
+    [[ -n "$ws" ]] && echo "$ws"
+    ;;
+  stop)
+    name="${1:-}"; tmp="$(mktemp)"
+    awk -F'\t' -v n="$name" 'BEGIN{OFS="\t"} $1==n{$3="stopped"} {print}' "$state" > "$tmp"; mv "$tmp" "$state"
+    ;;
+  rm)
+    name="${1:-}"; tmp="$(mktemp)"
+    awk -F'\t' -v n="$name" '$1!=n {print}' "$state" > "$tmp"; mv "$tmp" "$state"
+    ;;
+  --help|help|"")
+    echo "usage: sbx {version|settings|daemon|ssh|secret|ls|run|exec|stop|rm|diagnose} …"
+    echo "commands: ls run exec stop rm diagnose setup ssh"
+    ;;
+  diagnose) echo "stub: ok" ;;
+  *) echo "sbx: unknown command: $cmd" >&2; exit 1 ;;
+esac

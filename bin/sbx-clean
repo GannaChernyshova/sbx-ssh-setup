@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+#
+# sbx-clean — reclaim resources: remove orphan and/or stopped sandboxes and
+# prune the managed Codex SSH aliases that pointed at them, so ~/.ssh/config
+# never accumulates stale hosts.
+#
+#   sbx-clean                     # remove orphan + stopped (prompts)
+#   sbx-clean --orphans-only      # only sandboxes with no workspace mount
+#   sbx-clean --stopped           # only stopped sandboxes
+#   sbx-clean <name> [<name>...]  # remove specific sandboxes
+#   sbx-clean --dry-run           # show what would be removed
+#   sbx-clean --yes               # don't prompt (required when non-interactive)
+#
+set -euo pipefail
+
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do _self="$(readlink "$_self")"; done
+_bindir="$(cd "$(dirname "$_self")" && pwd)"
+for _cand in "${SBX_CODEX_LIB:-}" "$_bindir/../lib/sbx-codex" "$_bindir/../lib"; do
+  if [[ -n "$_cand" && -f "$_cand/common.sh" ]]; then _LIB="$_cand"; break; fi
+done
+[[ -n "${_LIB:-}" ]] || { echo "sbx-clean: cannot locate lib/" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+source "$_LIB/common.sh"
+# shellcheck source=lib/sbx-interface.sh
+source "$_LIB/sbx-interface.sh"
+# shellcheck source=lib/codex.sh
+source "$_LIB/codex.sh"
+
+PROG="sbx-clean"
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} — remove orphan/stopped sandboxes and prune their SSH aliases
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG [--orphans-only | --stopped | <name>...] [--dry-run] [--yes]
+
+${C_BOLD}OPTIONS${C_RESET}
+  --orphans-only  Only remove sandboxes with no workspace mount.
+  --stopped       Only remove stopped sandboxes.
+  --dry-run       Show what would be removed; make no changes.
+  --yes           Skip the confirmation prompt.
+  -h, --help      Show this help.
+EOF
+}
+
+MODE="orphans-and-stopped"
+DRY_RUN=0
+ASSUME_YES=0
+NAMES=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -V|--version) printf '%s %s\n' "$PROG" "$(toolkit_version)"; exit 0 ;;
+    --orphans-only) MODE="orphans"; shift ;;
+    --stopped) MODE="stopped"; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --yes|-y) ASSUME_YES=1; shift ;;
+    -*) die "unknown option: $1  (try --help)" ;;
+    *) NAMES+=("$1"); MODE="explicit"; shift ;;
+  esac
+done
+
+sbx_present || die "'$SBX_BIN' not found on PATH."
+
+# Build the target list.
+targets=()
+if [[ "$MODE" == "explicit" ]]; then
+  targets=("${NAMES[@]}")
+else
+  while IFS=$'\t' read -r name agent status ws; do
+    [[ -n "$name" ]] || continue
+    case "$MODE" in
+      orphans)              [[ -z "$ws" ]] && targets+=("$name") ;;
+      stopped)              [[ "$status" == "stopped" ]] && targets+=("$name") ;;
+      orphans-and-stopped)  { [[ -z "$ws" ]] || [[ "$status" == "stopped" ]]; } && targets+=("$name") ;;
+    esac
+  done < <(sbx_ls_normalized 2>/dev/null || true)
+fi
+
+if [[ "${#targets[@]}" -eq 0 ]]; then
+  success "Nothing to clean."
+  exit 0
+fi
+
+info "Will remove ${#targets[@]} sandbox(es) and their Codex SSH aliases:"
+for t in "${targets[@]}"; do hint "$t"; done
+
+if [[ "$DRY_RUN" == 1 ]]; then
+  info "[dry-run] no changes made."
+  exit 0
+fi
+
+if [[ "$ASSUME_YES" != 1 ]]; then
+  confirm "Proceed?" || { info "Aborted."; exit 0; }
+fi
+
+for t in "${targets[@]}"; do
+  if "$SBX_BIN" "$SBX_CMD_RM" "$t" >/dev/null 2>&1; then
+    codex_ssh_remove_alias "$t"
+    success "removed $t (+ SSH alias)"
+  else
+    err "failed to remove $t"
+  fi
+done
