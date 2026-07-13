@@ -14,7 +14,7 @@ named after the current directory. Pick the script for your platform.
 2. On first run only (tracked by `~/.sbx_features_enabled`):
    enables `platform.allowExperimentalFeatures` and `feature.ssh`,
    restarts the `sbx` daemon, and runs `sbx ssh setup`.
-3. Creates the sandbox from the chosen AI agent template (first argument, defaults to `codex`).
+3. Creates the sandbox from the chosen AI agent template (required first argument).
 4. Prints the SSH connection command.
 
 ## Requirements
@@ -26,12 +26,12 @@ named after the current directory. Pick the script for your platform.
 ## Usage
 
 Run from inside the project directory you want as the sandbox name. Pass the AI agent
-template as the first argument (e.g. `codex`, `cursor`, `claude`); omit it to default to `codex`.
+template as the first argument (required, e.g. `codex`, `cursor`, `claude`).
 
 **macOS / Linux**
 ```bash
 chmod +x sbx_ssh_setup.sh
-./sbx_ssh_setup.sh            # codex (default)
+./sbx_ssh_setup.sh codex
 ./sbx_ssh_setup.sh cursor
 ./sbx_ssh_setup.sh claude
 ```
@@ -40,7 +40,7 @@ chmod +x sbx_ssh_setup.sh
 ```powershell
 # once, if scripts are blocked:
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-.\sbx_ssh_setup.ps1          # codex (default)
+.\sbx_ssh_setup.ps1 codex
 .\sbx_ssh_setup.ps1 cursor
 .\sbx_ssh_setup.ps1 claude
 ```

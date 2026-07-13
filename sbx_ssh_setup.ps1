@@ -1,8 +1,9 @@
 #Requires -Version 5.1
 # Windows (PowerShell) equivalent of sbx_ssh_setup.sh
 param(
-    # AI agent / template to provision (e.g. codex, cursor, claude). Defaults to codex.
-    [string]$Agent = "codex"
+    # AI agent / template to provision (e.g. codex, cursor, claude). Required.
+    [Parameter(Mandatory = $true)]
+    [string]$Agent
 )
 $ErrorActionPreference = "Stop"
 

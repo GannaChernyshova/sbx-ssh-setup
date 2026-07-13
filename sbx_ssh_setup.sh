@@ -4,8 +4,12 @@ set -e
 # Ensure Homebrew binaries are on PATH (required on Apple Silicon Macs)
 export PATH="/opt/homebrew/bin:$PATH"
 
-# AI agent / template to provision (e.g. codex, cursor, claude). Defaults to codex.
-AGENT="${1:-codex}"
+# AI agent / template to provision (e.g. codex, cursor, claude). Required.
+AGENT="$1"
+if [ -z "$AGENT" ]; then
+  echo "Usage: $0 <agent>   (e.g. codex, cursor, claude)" >&2
+  exit 1
+fi
 
 # Derive sandbox name from the current project directory (use as-is, no suffix)
 PROJECT_DIR=$(basename "$PWD")
