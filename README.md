@@ -1,7 +1,7 @@
 # sbx-ssh-setup
 
-Provisions an SSH-accessible [`sbx`](https://docs.docker.com/) sandbox named after the current
-directory. Pick the script for your platform.
+Provisions an SSH-accessible [`sbx`](https://docs.docker.com/ai/sandboxes/get-started/) sandbox
+named after the current directory. Pick the script for your platform.
 
 | Platform      | Script               |
 |---------------|----------------------|
@@ -19,7 +19,7 @@ directory. Pick the script for your platform.
 
 ## Requirements
 
-- `sbx` CLI on `PATH`.
+- `sbx` CLI installed and on `PATH` — see [Docker Sandboxes: Get started](https://docs.docker.com/ai/sandboxes/get-started/).
 - macOS/Linux: `bash` (macOS also assumes Homebrew at `/opt/homebrew/bin`).
 - Windows: PowerShell 5.1+.
 
