@@ -51,3 +51,11 @@ ssh <directory-name>.sbx
 ```
 
 To re-run the one-time setup: `rm ~/.sbx_features_enabled` (Windows: `del %USERPROFILE%\.sbx_features_enabled`).
+
+## Connecting an agent GUI
+
+Per-agent guides for connecting the desktop UI to the sandbox over SSH:
+
+| Agent  | Guide                        |
+|--------|------------------------------|
+| Codex  | [docs/codex.md](docs/codex.md) |
