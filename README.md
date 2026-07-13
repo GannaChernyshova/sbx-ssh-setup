@@ -1,53 +1,48 @@
 # sbx-ssh-setup
 
-A convenience script that provisions a [Docker Sandboxes](https://docs.docker.com/) (`sbx`)
-sandbox with SSH access enabled, using the current project directory name as the sandbox name.
+Provisions an SSH-accessible [`sbx`](https://docs.docker.com/) sandbox named after the current
+directory. Pick the script for your platform.
+
+| Platform      | Script               |
+|---------------|----------------------|
+| macOS / Linux | `sbx_ssh_setup.sh`   |
+| Windows       | `sbx_ssh_setup.ps1`  |
 
 ## What it does
 
-`sbx_ssh_setup.sh` automates the steps needed to spin up an SSH-accessible sandbox:
-
-1. **Ensures Homebrew is on `PATH`** — prepends `/opt/homebrew/bin` so the `sbx` CLI is found
-   on Apple Silicon Macs.
-2. **Derives the sandbox name** from the current working directory's basename.
-3. **Runs one-time setup** (only the first time, tracked via a `~/.sbx_features_enabled` flag file):
-   - Enables experimental features (`platform.allowExperimentalFeatures`).
-   - Enables the SSH feature (`feature.ssh`).
-   - Restarts the `sbx` daemon so the new features take effect.
-   - Runs `sbx ssh setup` to configure SSH.
-4. **Creates the sandbox** from the `codex` template with the derived name.
-5. **Prints the SSH connection command** for the new sandbox.
-
-On subsequent runs the one-time setup is skipped, so the script just creates the sandbox.
+1. Derives the sandbox name from the current directory's basename.
+2. On first run only (tracked by `~/.sbx_features_enabled`):
+   enables `platform.allowExperimentalFeatures` and `feature.ssh`,
+   restarts the `sbx` daemon, and runs `sbx ssh setup`.
+3. Creates the sandbox from the `codex` template.
+4. Prints the SSH connection command.
 
 ## Requirements
 
-- macOS (the script assumes the Homebrew path `/opt/homebrew/bin`).
-- The [`sbx` CLI](https://docs.docker.com/) installed and available.
-- Homebrew installed.
+- `sbx` CLI on `PATH`.
+- macOS/Linux: `bash` (macOS also assumes Homebrew at `/opt/homebrew/bin`).
+- Windows: PowerShell 5.1+.
 
 ## Usage
 
-Run the script from inside the project directory you want to use as the sandbox name:
+Run from inside the project directory you want as the sandbox name.
 
+**macOS / Linux**
 ```bash
-cd /path/to/your-project
+chmod +x sbx_ssh_setup.sh
 ./sbx_ssh_setup.sh
 ```
 
-Make sure the script is executable:
-
-```bash
-chmod +x sbx_ssh_setup.sh
+**Windows (PowerShell)**
+```powershell
+# once, if scripts are blocked:
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+.\sbx_ssh_setup.ps1
 ```
 
-Once it finishes, connect to the sandbox with the command it prints, e.g.:
-
+Then connect:
 ```bash
-ssh your-project.sbx
+ssh <directory-name>.sbx
 ```
 
-## Notes
-
-- The sandbox name equals the basename of the directory you run the script from.
-- To re-run the one-time feature setup, delete the flag file: `rm ~/.sbx_features_enabled`.
+To re-run the one-time setup: `rm ~/.sbx_features_enabled` (Windows: `del %USERPROFILE%\.sbx_features_enabled`).
