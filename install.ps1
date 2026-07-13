@@ -53,10 +53,34 @@ function Remove-UserPath {
     }
 }
 
+# Right-click "Open in Codex Sandbox" on a folder (and on folder background).
+# HKCU only — no admin rights needed, so it deploys per-user via MDM cleanly.
+function Register-ContextMenu {
+    param([string]$MenuCmd)
+    $label = 'Open in Codex Sandbox'
+    $cmd = "`"$MenuCmd`" `"%V`""
+    foreach ($base in 'Directory', 'Directory\Background') {
+        $key = "HKCU:\Software\Classes\$base\shell\OpenInCodexSandbox"
+        New-Item -Path $key -Force | Out-Null
+        Set-ItemProperty -Path $key -Name '(default)' -Value $label
+        New-Item -Path "$key\command" -Force | Out-Null
+        Set-ItemProperty -Path "$key\command" -Name '(default)' -Value $cmd
+    }
+    Write-Host "OK added right-click 'Open in Codex Sandbox' to Explorer" -ForegroundColor Green
+}
+
+function Unregister-ContextMenu {
+    foreach ($base in 'Directory', 'Directory\Background') {
+        $key = "HKCU:\Software\Classes\$base\shell\OpenInCodexSandbox"
+        if (Test-Path $key) { Remove-Item -Path $key -Recurse -Force }
+    }
+}
+
 if ($Version) { $srcVersion; exit 0 }
 
 if ($Uninstall) {
     Write-Host "Removing sbx-codex from $Prefix …"
+    Unregister-ContextMenu
     if (Test-Path $Prefix) { Remove-Item -Recurse -Force $Prefix }
     Remove-UserPath $Prefix
     Write-Host "OK Uninstalled." -ForegroundColor Green
@@ -83,6 +107,21 @@ Copy-Item (Join-Path $src 'VERSION') (Join-Path $Prefix 'lib') -Force
 Write-Host "OK installed commands + module" -ForegroundColor Green
 
 Add-UserPath $Prefix
+
+# Wrapper the right-click menu calls: runs sbx-open, then keeps the window open
+# so the user can read the final Codex connection steps.
+$menuCmd = Join-Path $Prefix 'sbx-codex-menu.cmd'
+$menuBody = @'
+@echo off
+call "%~dp0sbx-open.cmd" codex %*
+echo.
+echo ============================================================
+echo  Follow the steps shown above in the Codex app to finish.
+echo ============================================================
+pause
+'@
+Set-Content -Path $menuCmd -Value $menuBody -Encoding ascii
+Register-ContextMenu -MenuCmd $menuCmd
 
 Write-Host ''
 Write-Host "Running sbx-doctor …"

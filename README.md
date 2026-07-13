@@ -48,11 +48,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 Both installers are idempotent and version-aware — re-run them to upgrade in place. Every command
 reports `--version` / `-Version`.
 
-### Least-technical users: double-click launchers
+### Least-technical users: right-click a folder
 
-`launchers/` contains **Open in Codex.command** (macOS) and **Open in Codex.bat** (Windows). No
-commands to type: double-click (macOS) and drag your project folder in, or drag a folder onto the
-`.bat` (Windows). They just wrap `sbx-open`.
+The installer registers a **right-click → "Open in Codex Sandbox"** entry so users never open a
+terminal:
+
+- **Windows:** File Explorer context menu on any folder (and on folder background).
+- **macOS:** Finder **Quick Action / Services** entry (installed to `~/Library/Services`).
+
+Both just run `sbx-open codex <folder>`. As a guaranteed fallback, `launchers/` also has
+double-click **Open in Codex.command** (macOS, drag folder in) and **Open in Codex.bat** (Windows,
+drag a folder onto it).
+
+Piloting this? See **[PILOT.md](PILOT.md)** for the test runbook and success criteria.
 
 ## Commands
 
@@ -84,6 +92,18 @@ use a single dash (`-DryRun`, `-OrphansOnly`).
 - **One sandbox per project**, reused on re-run. Collisions are resolved, not silently merged.
 - **No secrets in this repo.** OpenAI/GitHub credentials are `sbx` secrets provisioned per machine.
 - **No unsupported hacks.** We never write Codex's private state files.
+
+## Future improvements
+
+The pilot deliberately front-loads the risk and keeps the distribution layer stable, so nothing
+built now is wasted as the platform matures.
+
+| Phase | Item | Trigger |
+|---|---|---|
+| Pilot | Right-click flow + one-time bootstrap; 1 Mac + 2–3 Windows machines | now |
+| Harden | Signed/notarized MDM packages (customer's own Apple/Authenticode certs); silent Jamf/Intune profiles | after pilot sign-off |
+| Automate last step | Auto-create the Codex remote project when OpenAI ships an API/deep-link ([#21554](https://github.com/openai/codex/issues/21554)) | vendor |
+| Ops | Scheduled `sbx-clean`, fleet health via `sbx-doctor`, version pinning | ongoing |
 
 ## Development
 
