@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+#
+# Stub `sbx` CLI for the test suite. Emulates the documented behavior of the
+# real sbx v0.35+ CLI closely enough to exercise the toolkit end-to-end:
+#   - `ls` renders the exact column format seen on a real host
+#   - `run` / `start` / `stop` / `rm` mutate persisted state
+#   - `inspect` reports a mirrored in-container mount path
+#   - the missing-sandbox error text is reproduced verbatim
+#
+# State lives in $SBX_STUB_STATE (TSV: name<TAB>agent<TAB>status<TAB>workspace).
+# An empty workspace field models an orphan (no mount).
+#
+set -euo pipefail
+
+STATE="${SBX_STUB_STATE:-${TMPDIR:-/tmp}/sbx-stub-state.tsv}"
+VERSION="${SBX_STUB_VERSION:-0.35.2}"
+
+seed_state() {
+  mkdir -p "$(dirname "$STATE")"
+  # Seeded to mirror the real-host fixture, plus one orphan for tests.
+  cat >"$STATE" <<'EOF'
+cursor-sbx	shell	running	/Users/marcpardee/demos
+demo	claude	stopped	/Users/marcpardee/demos/sbx-demo
+orphan-x	shell	running
+EOF
+}
+[[ -f "$STATE" ]] || seed_state
+
+# get_field <name> <col 1-4> ; returns non-zero if name absent
+get_field() {
+  awk -F'\t' -v n="$1" -v c="$2" '$1==n {print $c; found=1} END{exit !found}' "$STATE"
+}
+exists() { awk -F'\t' -v n="$1" '$1==n{f=1} END{exit !f}' "$STATE"; }
+
+not_found() {
+  # Verbatim real-host error text.
+  printf 'ERROR: sandbox "%s" does not exist; to create it, name an agent:\n' "$1" >&2
+  printf '  sbx run <agent> --name %s\n' "$1" >&2
+  exit 1
+}
+
+set_status() {
+  local n="$1" s="$2" tmp; tmp="$(mktemp)"
+  awk -F'\t' -v OFS='\t' -v n="$n" -v s="$s" '$1==n{$3=s} {print}' "$STATE" >"$tmp"
+  mv "$tmp" "$STATE"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  version|--version|-v)
+    echo "sbx version $VERSION"
+    ;;
+
+  ls)
+    # Render an aligned table with header offsets that match the data columns
+    # (mirrors real sbx). Column order: SANDBOX AGENT STATUS PORTS WORKSPACE.
+    awk -F'\t' '
+      BEGIN {
+        h[1]="SANDBOX"; h[2]="AGENT"; h[3]="STATUS"; h[4]="PORTS"; h[5]="WORKSPACE"
+        for (i=1;i<=5;i++) w[i]=length(h[i])
+        if (length(h[4])<40) w[4]=40   # PORTS column is wide even when empty
+      }
+      { rows++
+        c[rows,1]=$1; c[rows,2]=$2; c[rows,3]=$3; c[rows,4]=""; c[rows,5]=$4
+        for (i=1;i<=5;i++) if (length(c[rows,i])>w[i]) w[i]=length(c[rows,i])
+      }
+      END {
+        for (i=1;i<=5;i++) printf "%-*s%s", w[i]+3, h[i], (i==5?"\n":"")
+        for (r=1;r<=rows;r++)
+          for (i=1;i<=5;i++) printf "%-*s%s", w[i]+3, c[r,i], (i==5?"\n":"")
+      }
+    ' "$STATE"
+    ;;
+
+  run)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      cat <<'EOF'
+Run an agent in a sandbox, creating the sandbox if it does not already exist.
+To create a sandbox without attaching, use "sbx create" instead, or pass
+--detached (-d) to print the sandbox ID and exit without opening an
+interactive session. To re-attach to an existing sandbox by name, use --name.
+
+Available agents: claude, codex, copilot, cursor, gemini, shell
+
+Usage:  sbx run [flags] [AGENT] [PATH...]
+
+Flags:
+  -d, --detached      Create/start and exit without an interactive session
+      --name string   Name for the sandbox
+EOF
+      exit 0
+    fi
+    # Log the raw invocation so tests can assert --detached was used.
+    [[ -n "${SBX_STUB_RUN_LOG:-}" ]] && printf 'run %s\n' "$*" >>"$SBX_STUB_RUN_LOG"
+
+    detached=0; name=""; agent=""; ws=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -d|--detached) detached=1; shift ;;
+        --name) name="$2"; shift 2 ;;
+        --*) shift ;;                 # ignore other long flags
+        -*) shift ;;
+        *) if [[ -z "$agent" ]]; then agent="$1"; else ws="$1"; fi; shift ;;
+      esac
+    done
+    [[ -n "$name" ]] || { echo "ERROR: run requires --name" >&2; exit 1; }
+
+    if exists "$name"; then
+      set_status "$name" running        # re-attach / wake
+      msg="re-attached to sandbox \"$name\""
+    else
+      [[ -n "$agent" ]] || { echo "ERROR: creating a sandbox requires an agent" >&2; exit 1; }
+      printf '%s\t%s\t%s\t%s\n' "$name" "$agent" "running" "$ws" >>"$STATE"
+      msg="created sandbox \"$name\" (agent=$agent, workspace=${ws:-<none>})"
+    fi
+
+    if [[ "$detached" == 1 ]]; then
+      printf '%s [detached] id=sbx_%s\n' "$msg" "$name"
+    else
+      printf '%s\n' "$msg"
+      # Emulate the interactive agent shell that holds the terminal until exit.
+      [[ "${SBX_STUB_RUN_INTERACTIVE:-0}" == 1 ]] && cat >/dev/null 2>&1 || true
+    fi
+    ;;
+
+  create)
+    # `sbx create <agent> --name <name> [workspace]` — create WITHOUT starting.
+    agent=""; name=""; ws=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --help|-h) echo "Usage: sbx create <agent> --name <name> [PATH]"; exit 0 ;;
+        --name) name="$2"; shift 2 ;;
+        --*) shift ;;
+        -*) shift ;;
+        *) if [[ -z "$agent" ]]; then agent="$1"; else ws="$1"; fi; shift ;;
+      esac
+    done
+    [[ -n "$name" ]] || { echo "ERROR: create requires --name" >&2; exit 1; }
+    if exists "$name"; then echo "ERROR: sandbox \"$name\" already exists" >&2; exit 1; fi
+    printf '%s\t%s\t%s\t%s\n' "$name" "${agent:-shell}" "stopped" "$ws" >>"$STATE"
+    echo "created sandbox \"$name\" (not started)"
+    ;;
+
+  exec)
+    # `sbx exec <name> -- <cmd...>`. We only model `pwd`, returning the
+    # (mirrored) workspace path so container-path probing works.
+    n="${1:?exec needs a name}"; shift
+    exists "$n" || not_found "$n"
+    [[ "${1:-}" == "--" ]] && shift
+    case "${1:-}" in
+      pwd) get_field "$n" 4 || true ;;
+      *)   echo "exec: unsupported stub command '${1:-}'" >&2; exit 1 ;;
+    esac
+    ;;
+
+  stop)  exists "$1" || not_found "$1"; set_status "$1" stopped; echo "stopped $1" ;;
+
+  rm)
+    n="${1:?rm needs a name}"
+    exists "$n" || not_found "$n"
+    tmp="$(mktemp)"; awk -F'\t' -v n="$n" '$1!=n' "$STATE" >"$tmp"; mv "$tmp" "$STATE"
+    echo "removed $n"
+    ;;
+
+  setup)   echo "host configuration prepared"; exit 0 ;;
+  ssh)     echo "ssh config written"; exit 0 ;;
+  diagnose) echo "no issues detected"; exit 0 ;;
+  daemon)  echo "daemon $*: ok" ;;
+
+  --help|-h|"")
+    cat <<EOF
+sbx — Docker Sandboxes (stub)
+Usage: sbx <command> [args]
+Commands: version ls run create exec stop rm setup ssh diagnose daemon
+EOF
+    ;;
+  *) echo "sbx: unknown command '$cmd'" >&2; exit 1 ;;
+esac

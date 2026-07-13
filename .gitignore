@@ -1,0 +1,10 @@
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+
+# Local scratch / test artifacts
+*.log
+/tmp/
+
+# Nothing else to ignore — the toolkit is plain shell + docs.

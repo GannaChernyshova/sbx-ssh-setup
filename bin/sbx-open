@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+#
+# sbx-open — the golden path: open a project in Cursor, safely sandboxed.
+#
+# Creates (or reuses) exactly one Docker Sandbox for a project directory, mounts
+# only that directory, verifies SSH reachability, and launches Cursor already
+# connected and already in the right folder. Idempotent: run it twice on the
+# same path and it just reopens the same sandbox.
+#
+set -euo pipefail
+
+# --- locate our libs (works from the repo and from an installed prefix) ----
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do _self="$(readlink "$_self")"; done
+_bindir="$(cd "$(dirname "$_self")" && pwd)"
+for _cand in "${SBX_CURSOR_LIB:-}" "$_bindir/../lib/sbx-cursor" "$_bindir/../lib"; do
+  if [[ -n "$_cand" && -f "$_cand/common.sh" ]]; then _LIB="$_cand"; break; fi
+done
+[[ -n "${_LIB:-}" ]] || { echo "sbx-open: cannot locate lib/ (common.sh)" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+source "$_LIB/common.sh"
+# shellcheck source=lib/sbx-interface.sh
+source "$_LIB/sbx-interface.sh"
+
+PROG="sbx-open"
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} — open a project in Cursor, isolated in a Docker Sandbox
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG <path> [--name <name>] [--agent <agent>] [options]
+
+${C_BOLD}ARGUMENTS${C_RESET}
+  <path>              Project directory to mount (the ONLY shared surface).
+
+${C_BOLD}OPTIONS${C_RESET}
+  --name <name>       Sandbox name (default: derived from the directory name).
+  --agent <agent>     Agent/template to run (default: ${SBX_DEFAULT_AGENT}).
+  --no-cursor         Prepare/verify the sandbox but do not launch Cursor.
+  --print-uri         Print the vscode-remote folder URI and exit.
+  --dry-run           Show what would happen; make no changes.
+  -h, --help          Show this help.
+
+${C_BOLD}EXAMPLES${C_RESET}
+  $PROG ~/src/myproj
+  $PROG ~/src/myproj --name myproj-review
+  $PROG . --no-cursor
+
+${C_BOLD}RULES${C_RESET}
+  • One sandbox per project. Mount the repo — never \$HOME or a parent of many
+    repos. The mount is the entire blast radius of the agent.
+  • Never type a new name into Cursor's "Connect via SSH" box — that can spawn
+    an empty, workspace-less sandbox. Always start from $PROG.
+EOF
+}
+
+# --- argument parsing ------------------------------------------------------
+PATH_ARG=""
+NAME=""
+AGENT="$SBX_DEFAULT_AGENT"
+NO_CURSOR=0
+PRINT_URI=0
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -V|--version) printf '%s %s\n' "$PROG" "$(toolkit_version)"; exit 0 ;;
+    --name)    NAME="${2:?--name needs a value}"; shift 2 ;;
+    --agent)   AGENT="${2:?--agent needs a value}"; shift 2 ;;
+    --no-cursor) NO_CURSOR=1; shift ;;
+    --print-uri) PRINT_URI=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --) shift; break ;;
+    -*) die "unknown option: $1  (try --help)" ;;
+    *)  [[ -z "$PATH_ARG" ]] || die "unexpected extra argument: $1"; PATH_ARG="$1"; shift ;;
+  esac
+done
+
+[[ -n "$PATH_ARG" ]] || { usage; exit 2; }
+
+# --- preflight -------------------------------------------------------------
+sbx_present || die "'$SBX_BIN' not found on PATH. Install the sbx CLI, then run: sbx-doctor"
+
+WS="$(abspath "$PATH_ARG")"
+[[ -d "$WS" ]] || die "not a directory: $WS"
+
+# Guard against over-broad mounts (the #1 way to widen the blast radius).
+if [[ "$WS" == "$HOME" ]]; then
+  die "refusing to mount your entire home directory ($HOME). Mount a specific project."
+fi
+
+# --- name derivation + collision handling ----------------------------------
+# When the name is auto-derived and collides with a DIFFERENT workspace, we
+# suffix (-2, -3, ...). When the user passed --name explicitly, we never
+# silently rename — we reuse on match and refuse on mismatch.
+name_explicit=0
+if [[ -n "$NAME" ]]; then
+  name_explicit=1
+  NAME="$(sanitize_name "$NAME")"
+else
+  NAME="$(sanitize_name "$(basename "$WS")")"
+fi
+
+# reuse_or_refuse <name> : classify an existing sandbox against our target WS.
+# Echoes one of: reuse | mismatch | orphan   (only when the name exists).
+classify() {
+  local n="$1" existing_ws
+  existing_ws="$(sbx_workspace "$n")"
+  if [[ -z "$existing_ws" ]]; then echo "orphan"
+  elif [[ "$existing_ws" == "$WS" ]]; then echo "reuse"
+  else echo "mismatch"; fi
+}
+
+resolve_name() {
+  local base="$NAME" n="$NAME" i=1
+  while sbx_exists "$n"; do
+    case "$(classify "$n")" in
+      reuse) NAME="$n"; return 0 ;;
+      orphan)
+        if [[ "$name_explicit" == 1 ]]; then
+          err "Sandbox '$n' exists but has NO workspace mount (orphan)."
+          hint "This is the empty-sandbox trap. Remove it, then retry:"
+          cmd "sbx-clean            # interactive"
+          cmd "$SBX_BIN $SBX_CMD_RM $n   # or remove just this one"
+          exit 1
+        fi
+        n="${base}-$((++i))" ;;    # auto-derived: step to a fresh name
+      mismatch)
+        if [[ "$name_explicit" == 1 ]]; then
+          err "Sandbox '$n' already exists for a DIFFERENT workspace:"
+          hint "existing: $(sbx_workspace "$n")"
+          hint "you asked for: $WS"
+          hint "Pick another name, or reuse the existing project directory:"
+          cmd "$PROG '$(sbx_workspace "$n")'        # open the existing one"
+          cmd "$PROG '$WS' --name ${base}-2         # new sandbox for this path"
+          exit 1
+        fi
+        n="${base}-$((++i))" ;;
+    esac
+  done
+  NAME="$n"   # first free name
+}
+
+resolve_name
+SSH_HOST="$(ssh_host "$NAME")"
+
+# --- create or reuse -------------------------------------------------------
+# Both create and wake go through sbx_ensure_running, which runs DETACHED
+# (`sbx run --detached`) so control returns immediately — no interactive agent
+# shell to exit before Cursor opens.
+created=0
+if sbx_exists "$NAME"; then
+  status="$(sbx_status "$NAME")"
+  info "Reusing sandbox ${C_BOLD}$NAME${C_RESET} (workspace: $WS)"
+  if [[ "$status" != "running" ]]; then
+    if [[ "$DRY_RUN" == 1 ]]; then
+      info "[dry-run] would wake stopped sandbox: $SBX_BIN $SBX_CMD_RUN $SBX_RUN_DETACH_FLAG --name $NAME"
+    else
+      info "Waking stopped sandbox (detached)…"
+      sbx_ensure_running "" "$NAME" ""
+    fi
+  fi
+else
+  if [[ "$DRY_RUN" == 1 ]]; then
+    info "[dry-run] would create (detached): $(sbx_ensure_running_cmd "$AGENT" "$NAME" "$WS")"
+  else
+    info "Creating sandbox ${C_BOLD}$NAME${C_RESET} (agent: $AGENT, workspace: $WS, detached)"
+    sbx_ensure_running "$AGENT" "$NAME" "$WS"
+    created=1
+  fi
+fi
+
+# --- SSH reachability ------------------------------------------------------
+if [[ "$DRY_RUN" == 1 ]]; then
+  info "[dry-run] would verify SSH: $SSH_BIN $SSH_HOST"
+else
+  if ! ssh_reachable "$NAME"; then
+    err "Sandbox '$NAME' is not reachable over SSH ($SSH_HOST)."
+    hint "SSH-to-sandbox is a one-time setup. Run these on this host:"
+    while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
+    hint "Then re-run: $PROG '$WS'"
+    hint "Diagnose everything at once with: sbx-doctor"
+    exit 1
+  fi
+  success "SSH reachable: $SSH_HOST"
+fi
+
+# --- resolve in-container path + build folder URI --------------------------
+if [[ "$DRY_RUN" == 1 ]]; then
+  CPATH="$WS"   # mirror assumption for display only
+else
+  if CPATH="$(container_ws_path "$NAME" "$WS")"; then :; else
+    warn "Could not confirm the in-container workspace path; using best guess."
+    hint "Verify on host with: sbx-doctor --verify"
+  fi
+fi
+URI="vscode-remote://ssh-remote+${SSH_HOST}${CPATH}"
+
+if [[ "$PRINT_URI" == 1 ]]; then
+  printf '%s\n' "$URI"   # stdout: the one machine-readable output
+  exit 0
+fi
+
+# --- launch Cursor ---------------------------------------------------------
+if [[ "$NO_CURSOR" == 1 ]]; then
+  success "Sandbox ready. Open it with:"
+  cmd "$CURSOR_BIN --folder-uri \"$URI\""
+  exit 0
+fi
+
+if [[ "$DRY_RUN" == 1 ]]; then
+  info "[dry-run] would launch: $CURSOR_BIN --folder-uri \"$URI\""
+  exit 0
+fi
+
+if ! cursor_present; then
+  warn "Cursor CLI ('$CURSOR_BIN') not found on PATH — sandbox is ready anyway."
+  hint "Open it manually with this folder URI:"
+  cmd "$CURSOR_BIN --folder-uri \"$URI\""
+  hint "In Cursor: enable the CLI via Command Palette → 'Shell Command: Install cursor command'."
+  exit 0
+fi
+
+info "Launching Cursor → $SSH_HOST:$CPATH"
+"$CURSOR_BIN" --folder-uri "$URI" >/dev/null 2>&1 || \
+  "$CURSOR_BIN" --folder-uri "$URI"
+if [[ "$created" == 1 ]]; then
+  success "New sandbox '$NAME' created and opened."
+else
+  success "Reopened sandbox '$NAME'."
+fi

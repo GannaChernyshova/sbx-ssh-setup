@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+#
+# install.sh — install the sbx-cursor toolkit.
+#
+# Copies the bin/ commands and lib/ helpers to a prefix (default ~/.local),
+# checks that the bin dir is on PATH, and runs sbx-doctor at the end.
+#
+#   ./install.sh                     # install (or upgrade) in ~/.local
+#   ./install.sh --update            # same thing; explicit "upgrade in place"
+#   PREFIX=/usr/local ./install.sh   # brew-style prefix (may need sudo)
+#   ./install.sh --uninstall         # remove what we installed
+#   ./install.sh --version           # print the version of this source tree
+#
+# Install is idempotent and version-aware: re-running over an existing install
+# upgrades it in place and reports the old -> new version.
+#
+set -euo pipefail
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREFIX="${PREFIX:-$HOME/.local}"
+BIN_DIR="$PREFIX/bin"
+LIB_DIR="$PREFIX/lib/sbx-cursor"
+COMMANDS=(sbx-open sbx-ls sbx-clean sbx-doctor)
+SRC_VERSION="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo unknown)"
+
+# Minimal colors (this script runs before lib/ is guaranteed installed).
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; D=$'\033[2m'; Z=$'\033[0m'
+else B=''; G=''; Y=''; R=''; D=''; Z=''; fi
+say()  { printf '%s\n' "$*"; }
+good() { printf '%s✅%s %s\n' "$G" "$Z" "$*"; }
+warnx(){ printf '%s⚠️ %s %s\n' "$Y" "$Z" "$*"; }
+bad()  { printf '%s❌%s %s\n' "$R" "$Z" "$*" >&2; }
+
+usage() {
+  cat <<EOF
+${B}install.sh${Z} — install / upgrade the sbx-cursor toolkit (v$SRC_VERSION)
+
+USAGE
+  ./install.sh [--update | --uninstall | --version]
+
+OPTIONS
+  --update     Upgrade an existing install in place (same as a plain install).
+  --uninstall  Remove installed commands + libs.
+  --version    Print the version of this source tree and exit.
+
+ENV
+  PREFIX   install prefix (default: \$HOME/.local)
+           binaries -> \$PREFIX/bin, libraries -> \$PREFIX/lib/sbx-cursor
+EOF
+}
+
+# installed_version : version currently installed at PREFIX (or empty).
+installed_version() {
+  [[ -f "$LIB_DIR/VERSION" ]] && tr -d '[:space:]' < "$LIB_DIR/VERSION"
+}
+
+uninstall() {
+  say "Removing sbx-cursor from $PREFIX …"
+  local c
+  for c in "${COMMANDS[@]}"; do rm -f "$BIN_DIR/$c" && say "  removed $BIN_DIR/$c" || true; done
+  rm -rf "$LIB_DIR" && say "  removed $LIB_DIR" || true
+  good "Uninstalled."
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  -V|--version) say "$SRC_VERSION"; exit 0 ;;
+  --update|--upgrade) ;;   # same code path as install; upgrade is in place
+  --uninstall) uninstall ;;
+  "") ;;
+  *) bad "unknown option: $1"; usage; exit 2 ;;
+esac
+
+OLD_VERSION="$(installed_version || true)"
+if [[ -n "$OLD_VERSION" ]]; then
+  if [[ "$OLD_VERSION" == "$SRC_VERSION" ]]; then
+    say "${B}Reinstalling sbx-cursor v$SRC_VERSION${Z} (already installed)"
+  else
+    say "${B}Upgrading sbx-cursor${Z} $OLD_VERSION ${B}→${Z} $SRC_VERSION"
+  fi
+else
+  say "${B}Installing sbx-cursor v$SRC_VERSION${Z}"
+fi
+say "  from: $SRC"
+say "  bin:  $BIN_DIR"
+say "  lib:  $LIB_DIR"
+
+mkdir -p "$BIN_DIR" "$LIB_DIR"
+
+# Libraries first (commands source them at runtime). install(1) overwrites, so
+# upgrading is just re-copying — no uninstall needed.
+install -m 0644 "$SRC/lib/common.sh"        "$LIB_DIR/common.sh"
+install -m 0644 "$SRC/lib/sbx-interface.sh" "$LIB_DIR/sbx-interface.sh"
+install -m 0644 "$SRC/VERSION"              "$LIB_DIR/VERSION"
+good "installed libraries"
+
+for c in "${COMMANDS[@]}"; do
+  install -m 0755 "$SRC/bin/$c" "$BIN_DIR/$c"
+  good "installed $c"
+done
+
+# PATH check.
+case ":$PATH:" in
+  *":$BIN_DIR:"*) good "$BIN_DIR is on your PATH" ;;
+  *)
+    warnx "$BIN_DIR is NOT on your PATH."
+    shell_rc="$HOME/.zshrc"; [[ "${SHELL:-}" == *bash ]] && shell_rc="$HOME/.bashrc"
+    say "  Add it with:"
+    say "    ${D}echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> $shell_rc${Z}"
+    say "    ${D}exec \$SHELL -l${Z}"
+    ;;
+esac
+
+say
+say "${B}Running sbx-doctor …${Z}"
+# Don't let a failing doctor abort the installer — installation itself succeeded.
+if "$BIN_DIR/sbx-doctor"; then
+  :
+else
+  warnx "sbx-doctor reported issues above — fix them before using sbx-open."
+fi
+
+say
+good "Done — sbx-cursor v$SRC_VERSION. Open your first project with:  ${B}sbx-open <path>${Z}"
+say "  New to this? See ${D}docs/RULEBOOK.md${Z}. Giving a demo? See ${D}docs/DEMO.md${Z}."
+say "  ${D}Upgrade later: pull the latest source, then re-run ./install.sh (or: make update).${Z}"

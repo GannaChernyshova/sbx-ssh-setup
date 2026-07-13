@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Stub `ssh` client for tests. Only understands *.sbx hosts.
+#   ssh ... <name>.sbx true          -> success (reachable)
+#   ssh ... <name>.sbx test -d PATH  -> success (mirror mount exists)
+# Set SBX_STUB_SSH_UNREACHABLE=1 to simulate SSH setup not done.
+set -euo pipefail
+
+if [[ "${SBX_STUB_SSH_UNREACHABLE:-0}" == "1" ]]; then
+  echo "ssh: connect to host failed" >&2
+  exit 255
+fi
+
+host=""
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) shift 2 ;;            # skip option + value (BatchMode, ConnectTimeout…)
+    -*) shift ;;              # skip other flags
+    *)  if [[ -z "$host" ]]; then host="$1"; else args+=("$1"); fi; shift ;;
+  esac
+done
+
+case "$host" in
+  *.sbx) : ;;                 # known sandbox host
+  *) echo "ssh: unknown host $host" >&2; exit 255 ;;
+esac
+
+# Every remote command (true / test -d ...) succeeds for a reachable sandbox.
+exit 0

@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+#
+# sbx-doctor — diagnose (and help repair) an sbx + Cursor setup, and verify the
+# assumptions this toolkit was built against.
+#
+#   sbx-doctor            health checks with ✅/❌ and the exact fix per failure
+#   sbx-doctor --verify   check every VERIFY-ON-HOST assumption vs the real CLI
+#                         and print a diff-style report (run this first on a
+#                         new host, after copying the toolkit out of a sandbox)
+#
+set -euo pipefail
+
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do _self="$(readlink "$_self")"; done
+_bindir="$(cd "$(dirname "$_self")" && pwd)"
+for _cand in "${SBX_CURSOR_LIB:-}" "$_bindir/../lib/sbx-cursor" "$_bindir/../lib"; do
+  if [[ -n "$_cand" && -f "$_cand/common.sh" ]]; then _LIB="$_cand"; break; fi
+done
+[[ -n "${_LIB:-}" ]] || { echo "sbx-doctor: cannot locate lib/" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+source "$_LIB/common.sh"
+# shellcheck source=lib/sbx-interface.sh
+source "$_LIB/sbx-interface.sh"
+
+PROG="sbx-doctor"
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} — health checks and assumption verification for sbx + Cursor
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG [--verify] [--fix]
+
+${C_BOLD}OPTIONS${C_RESET}
+  --verify    Check every VERIFY-ON-HOST assumption against the real CLI and
+              print a diff-style expected-vs-detected report.
+  --fix       Offer to remove any orphan sandboxes found (prompts).
+  -h, --help  Show this help.
+EOF
+}
+
+MODE="health"
+DO_FIX=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -V|--version) printf '%s %s\n' "$PROG" "$(toolkit_version)"; exit 0 ;;
+    --verify) MODE="verify"; shift ;;
+    --fix) DO_FIX=1; shift ;;
+    *) die "unknown option: $1  (try --help)" ;;
+  esac
+done
+
+PASS=0; FAIL=0; WARN=0
+ok()   { printf '%s %s\n' "${C_GREEN}✅${C_RESET}" "$1"; PASS=$((PASS+1)); }
+no()   { printf '%s %s\n' "${C_RED}❌${C_RESET}" "$1"; [[ -n "${2:-}" ]] && printf '   %sfix:%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_CYAN" "$2" "$C_RESET"; FAIL=$((FAIL+1)); }
+meh()  { printf '%s %s\n' "${C_YELLOW}⚠️ ${C_RESET}" "$1"; [[ -n "${2:-}" ]] && printf '   %s%s%s\n' "$C_DIM" "$2" "$C_RESET"; WARN=$((WARN+1)); }
+
+# find an ssh config that references the sandbox suffix
+ssh_config_has_suffix() {
+  local f
+  for f in "$HOME/.ssh/config" "$HOME/.ssh/config.d"/* "$HOME/.ssh"/*.conf; do
+    [[ -f "$f" ]] || continue
+    grep -qiE "Host .*\\${SBX_SSH_SUFFIX}([[:space:]]|$)" "$f" 2>/dev/null && return 0
+    grep -qF "$SBX_SSH_SUFFIX" "$f" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# ===========================================================================
+# HEALTH MODE
+# ===========================================================================
+run_health() {
+  heading "sbx + Cursor health check"
+
+  # 1. sbx present + version
+  if sbx_present; then
+    local v; v="$(sbx_version || true)"
+    if [[ -n "$v" ]] && version_ge "$v" "$SBX_MIN_VERSION"; then
+      ok "sbx $v (>= $SBX_MIN_VERSION)"
+    elif [[ -n "$v" ]]; then
+      no "sbx $v is older than required $SBX_MIN_VERSION" "upgrade sbx to >= $SBX_MIN_VERSION"
+    else
+      meh "sbx present but version could not be parsed" "check: $SBX_BIN version"
+    fi
+  else
+    no "sbx not found on PATH" "install the sbx CLI (v$SBX_MIN_VERSION+)"
+  fi
+
+  # 2. daemon reachable (using `ls` as a liveness probe)
+  if sbx_present; then
+    if "$SBX_BIN" "$SBX_CMD_LS" >/dev/null 2>&1; then
+      ok "sbx daemon responding ($SBX_BIN $SBX_CMD_LS)"
+    else
+      no "sbx daemon not responding" "$SBX_BIN $SBX_CMD_DIAGNOSE   # diagnose daemon/install issues"
+    fi
+  fi
+
+  # 3. SSH-to-sandbox config present
+  if ssh_config_has_suffix; then
+    ok "SSH config references *${SBX_SSH_SUFFIX} sandboxes"
+  else
+    no "no SSH config for *${SBX_SSH_SUFFIX} sandboxes (setup incomplete)" \
+       "$SBX_BIN setup ssh   # after enabling experimental + feature.ssh"
+    hint "Full one-time setup:"
+    while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
+  fi
+
+  # 4. Cursor CLI
+  if cursor_present; then
+    ok "Cursor CLI '$CURSOR_BIN' on PATH"
+  else
+    meh "Cursor CLI '$CURSOR_BIN' not on PATH (sbx-open will print the URI instead)" \
+        "In Cursor: Command Palette → 'Shell Command: Install cursor command'."
+  fi
+
+  # 5. orphan sandboxes
+  if sbx_present; then
+    local orphans; orphans="$(sbx_ls_normalized 2>/dev/null | awk -F'\t' '$4==""{print $1}')"
+    if [[ -z "$orphans" ]]; then
+      ok "no orphan sandboxes (all have a workspace mount)"
+    else
+      local count; count="$(printf '%s\n' "$orphans" | grep -c .)"
+      no "$count orphan sandbox(es): $(echo "$orphans" | paste -sd, -)" "sbx-clean --orphans-only"
+      if [[ "$DO_FIX" == 1 ]]; then
+        if confirm "Remove the orphan sandbox(es) now?"; then
+          while IFS= read -r o; do [[ -n "$o" ]] && "$SBX_BIN" "$SBX_CMD_RM" "$o" >/dev/null 2>&1 \
+            && success "removed $o" || true; done <<< "$orphans"
+        fi
+      fi
+    fi
+  fi
+
+  heading "Summary"
+  printf '%s %d passed · %s %d warnings · %s %d failed\n' \
+    "${C_GREEN}✅${C_RESET}" "$PASS" "${C_YELLOW}⚠️${C_RESET}" "$WARN" "${C_RED}❌${C_RESET}" "$FAIL"
+  if [[ "$FAIL" -gt 0 ]]; then
+    hint "Apply the fixes above, then re-run: $PROG"
+    return 1
+  fi
+  success "Ready. Open a project with: sbx-open <path>"
+  hint "Confirm the toolkit's assumptions match this host with: $PROG --verify"
+}
+
+# ===========================================================================
+# VERIFY MODE — expected (what we assumed) vs detected (what the CLI shows)
+# ===========================================================================
+DIFFS=0
+verrow() {
+  # verrow <label> <expected> <detected> <ok:0/1>
+  local label="$1" exp="$2" det="$3" good="$4" mark
+  if [[ "$good" == 1 ]]; then mark="${C_GREEN}match${C_RESET}"; else mark="${C_RED}DIFF${C_RESET}"; DIFFS=$((DIFFS+1)); fi
+  printf '  %-26s %s\n' "$label" "$mark"
+  printf '      %sexpected:%s %s\n' "$C_DIM" "$C_RESET" "$exp"
+  printf '      %sdetected:%s %s\n' "$C_DIM" "$C_RESET" "$det"
+}
+
+run_verify() {
+  heading "Verifying VERIFY-ON-HOST assumptions against the installed sbx"
+  sbx_present || die "sbx not found on PATH — run --verify on the host with sbx installed."
+
+  # a) subcommands exist in `sbx --help`
+  local help; help="$("$SBX_BIN" --help 2>&1 || true)"
+  local sub good det
+  for sub in "$SBX_CMD_LS" "$SBX_CMD_RUN" "$SBX_CMD_CREATE" "$SBX_CMD_EXEC" "$SBX_CMD_STOP" "$SBX_CMD_RM"; do
+    if grep -qwF "$sub" <<<"$help"; then good=1; det="present in 'sbx --help'"; else good=0; det="NOT found in 'sbx --help'"; fi
+    verrow "subcommand: $sub" "exists" "$det" "$good"
+  done
+
+  # b) detached create/wake flag exists in `sbx run --help` (the fix that keeps
+  #    sbx-open from blocking on an interactive shell)
+  local runhelp; runhelp="$("$SBX_BIN" "$SBX_CMD_RUN" --help 2>&1 || true)"
+  if grep -qF "$SBX_RUN_DETACH_FLAG" <<<"$runhelp" || grep -qwE '\-d' <<<"$runhelp"; then
+    good=1; det="'$SBX_RUN_DETACH_FLAG' present in 'sbx run --help'"
+  else good=0; det="'$SBX_RUN_DETACH_FLAG' not seen — sbx-open would attach a shell; check 'sbx run --help'"; fi
+  verrow "detached create flag" "$SBX_RUN_DETACH_FLAG" "$det" "$good"
+
+  # c) default agent appears in `sbx run --help`
+  if grep -qwF "$SBX_DEFAULT_AGENT" <<<"$runhelp"; then good=1; det="'$SBX_DEFAULT_AGENT' referenced by 'sbx run --help'"; else good=0; det="'$SBX_DEFAULT_AGENT' not seen in 'sbx run --help'"; fi
+  verrow "SBX_DEFAULT_AGENT" "$SBX_DEFAULT_AGENT" "$det" "$good"
+
+  # c) ls column format — required header tokens present
+  local header; header="$("$SBX_BIN" "$SBX_CMD_LS" 2>/dev/null | head -n1)"
+  local missing=""
+  for tok in SANDBOX AGENT STATUS WORKSPACE; do
+    grep -qiwF "$tok" <<<"$header" || missing+="$tok "
+  done
+  if [[ -z "$missing" ]]; then good=1; det="$header"; else good=0; det="missing: ${missing}| header was: ${header:-<empty>}"; fi
+  verrow "ls column format" "cols incl SANDBOX/AGENT/STATUS/WORKSPACE" "$det" "$good"
+
+  # d) SSH suffix — derive from the ssh config sbx wrote
+  local detected_suffix=""
+  local f line
+  for f in "$HOME/.ssh/config" "$HOME/.ssh/config.d"/* "$HOME/.ssh"/*.conf; do
+    [[ -f "$f" ]] || continue
+    line="$(grep -iE '^[[:space:]]*Host[[:space:]]+\*\.' "$f" 2>/dev/null | head -n1 || true)"
+    [[ -n "$line" ]] && { detected_suffix=".${line##*\*.}"; detected_suffix="${detected_suffix%% *}"; break; }
+  done
+  if [[ -z "$detected_suffix" ]]; then good=0; det="no 'Host *.<suffix>' line found in ssh config (setup ssh not run?)"
+  elif [[ "$detected_suffix" == "$SBX_SSH_SUFFIX" ]]; then good=1; det="$detected_suffix"
+  else good=0; det="$detected_suffix"; fi
+  verrow "SBX_SSH_SUFFIX" "$SBX_SSH_SUFFIX" "$det" "$good"
+
+  # e) in-container mount mirrors host path — probe a live sandbox (no `inspect`
+  #    command exists; use `sbx exec` pwd, falling back to an ssh `test -d`)
+  local sample sname swss cpath
+  sample="$(sbx_ls_normalized 2>/dev/null | awk -F'\t' '$4!=""{print $1"\t"$4; exit}')"
+  if [[ -z "$sample" ]]; then
+    verrow "mount mirrors host path" "container path == host path" "no sandbox with a workspace to probe — create one and re-run" 0
+  else
+    sname="${sample%%$'\t'*}"; swss="${sample#*$'\t'}"
+    cpath="$(exec_ws_probe "$sname" 2>/dev/null || true)"
+    if [[ -z "$cpath" ]] && ssh_reachable "$sname" \
+       && "$SSH_BIN" -o BatchMode=yes "$(ssh_host "$sname")" "test -d '$swss'" >/dev/null 2>&1; then
+      cpath="$swss"   # mirror confirmed via ssh
+    fi
+    if [[ "$cpath" == "$swss" ]]; then good=1; det="container workspace == host path ($swss) on '$sname'"
+    elif [[ -n "$cpath" ]]; then good=0; det="container=$cpath host=$swss (NOT mirrored — set SBX_MOUNT_MIRRORS_HOST=0, SBX_FALLBACK_CONTAINER_WS=$cpath)"
+    else good=0; det="could not probe container path for '$sname' (tried 'sbx exec' + ssh test -d)"; fi
+    verrow "mount mirrors host path" "container path == host path" "$det" "$good"
+  fi
+
+  heading "Verification summary"
+  if [[ "$DIFFS" -eq 0 ]]; then
+    success "All assumptions match this host. The toolkit is safe to use as-is."
+  else
+    warn "$DIFFS assumption(s) differ. Update lib/sbx-interface.sh (or export the"
+    hint "corresponding SBX_* variable) so the detected value is used, then re-run."
+    return 1
+  fi
+}
+
+case "$MODE" in
+  health) run_health ;;
+  verify) run_verify ;;
+esac

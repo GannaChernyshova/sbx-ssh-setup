@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#
+# sbx-ls — human-friendly view of your sandboxes.
+#
+# Flags orphans (running with no workspace) and stopped sandboxes, and prints a
+# ready-to-copy sbx-open command for every healthy one.
+#
+set -euo pipefail
+
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do _self="$(readlink "$_self")"; done
+_bindir="$(cd "$(dirname "$_self")" && pwd)"
+for _cand in "${SBX_CURSOR_LIB:-}" "$_bindir/../lib/sbx-cursor" "$_bindir/../lib"; do
+  if [[ -n "$_cand" && -f "$_cand/common.sh" ]]; then _LIB="$_cand"; break; fi
+done
+[[ -n "${_LIB:-}" ]] || { echo "sbx-ls: cannot locate lib/" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+source "$_LIB/common.sh"
+# shellcheck source=lib/sbx-interface.sh
+source "$_LIB/sbx-interface.sh"
+
+PROG="sbx-ls"
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} — list sandboxes, with health flags and copy/paste commands
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG [--orphans] [--stopped] [--quiet]
+
+${C_BOLD}OPTIONS${C_RESET}
+  --orphans   Show only orphan sandboxes (running, no workspace mount).
+  --stopped   Show only stopped sandboxes.
+  --quiet     Names only, one per line (script-friendly, no decoration).
+  -h, --help  Show this help.
+
+${C_BOLD}LEGEND${C_RESET}
+  ${C_GREEN}●${C_RESET} running   ${C_DIM}○${C_RESET} stopped   ${C_RED}⚠ orphan${C_RESET} (no workspace — remove with sbx-clean)
+EOF
+}
+
+FILTER=""      # ""|orphan|stopped
+QUIET=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -V|--version) printf '%s %s\n' "$PROG" "$(toolkit_version)"; exit 0 ;;
+    --orphans) FILTER="orphan"; shift ;;
+    --stopped) FILTER="stopped"; shift ;;
+    --quiet)   QUIET=1; shift ;;
+    *) die "unknown option: $1  (try --help)" ;;
+  esac
+done
+
+sbx_present || die "'$SBX_BIN' not found on PATH."
+
+rows="$(sbx_ls_normalized || true)"
+if [[ -z "$rows" ]]; then
+  info "No sandboxes. Create one with: sbx-open <path>"
+  exit 0
+fi
+
+n_orphan=0 n_stopped=0 n_ok=0
+printed=0
+
+while IFS=$'\t' read -r name agent status ws; do
+  [[ -n "$name" ]] || continue
+
+  kind="ok"
+  if [[ -z "$ws" ]]; then kind="orphan"
+  elif [[ "$status" != "running" ]]; then kind="stopped"; fi
+
+  case "$kind" in
+    orphan)  n_orphan=$((n_orphan+1)) ;;
+    stopped) n_stopped=$((n_stopped+1)) ;;
+    *)       n_ok=$((n_ok+1)) ;;
+  esac
+
+  # Apply filter.
+  if [[ -n "$FILTER" && "$kind" != "$FILTER" ]]; then continue; fi
+
+  if [[ "$QUIET" == 1 ]]; then
+    printf '%s\n' "$name"
+    continue
+  fi
+
+  case "$kind" in
+    orphan)  marker="${C_RED}⚠ orphan${C_RESET}" ;;
+    stopped) marker="${C_DIM}○ stopped${C_RESET}" ;;
+    ok)      marker="${C_GREEN}● running${C_RESET}" ;;
+  esac
+
+  printf '%s  %s  %s\n' "$marker" "${C_BOLD}$name${C_RESET}" "${C_DIM}[$agent]${C_RESET}"
+  if [[ "$kind" == "orphan" ]]; then
+    printf '     %s\n' "${C_DIM}no workspace mount — work here would be lost. Remove it:${C_RESET}"
+    printf '     %s\n' "${C_CYAN}\$ sbx-clean${C_RESET}"
+  else
+    printf '     %s\n' "${C_DIM}$ws${C_RESET}"
+    printf '     %s\n' "${C_CYAN}\$ sbx-open '$ws'${C_RESET}"
+  fi
+  printed=1
+done <<< "$rows"
+
+if [[ "$QUIET" == 0 ]]; then
+  [[ "$printed" == 1 ]] || info "Nothing matched the filter."
+  printf '\n%s\n' "${C_DIM}${n_ok} running · ${n_stopped} stopped · ${n_orphan} orphan${C_RESET}" >&2
+  if [[ "$n_orphan" -gt 0 ]]; then
+    warn "$n_orphan orphan sandbox(es) detected — run: sbx-clean"
+  fi
+fi

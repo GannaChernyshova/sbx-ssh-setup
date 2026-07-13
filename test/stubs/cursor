@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stub `cursor` CLI. Records its invocation so tests can assert the exact
+# --folder-uri passed. Never opens anything.
+set -euo pipefail
+LOG="${SBX_STUB_CURSOR_LOG:-${TMPDIR:-/tmp}/sbx-stub-cursor.log}"
+printf '%s\n' "$*" >>"$LOG"
+echo "cursor (stub): $*"
