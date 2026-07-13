@@ -31,11 +31,7 @@ ssh <sandbox-name>.sbx
 
 ## Step 2 — Add the sandbox as an SSH connection in Codex
 
-In Codex, open **Settings** (account menu → Settings):
-
-![Open Settings in Codex](images/codex-open-settings.png)
-
-Go to **Connections → Add → Add manually**, then configure:
+In Codex, open **Settings → Connections → Add → Add manually**, then configure:
 
 - **Display name:** any friendly name
 - **Hostname:** `<sandbox-name>.sbx`
