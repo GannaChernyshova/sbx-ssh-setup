@@ -4,15 +4,20 @@ This toolkit was authored inside a Docker Sandbox where the real `sbx`, `cursor`
 
 ## Prerequisites
 
-- `sbx` v0.35+ installed, daemon running.
-- SSH-to-sandbox enabled once (there is **no** `sbx config` command; use the real
-  `setup`/`ssh` subcommands — confirm exact flags with `sbx setup --help` /
-  `sbx ssh --help`):
+- `sbx` v0.35.0+ installed, daemon running.
+- **For the Cursor target only:** SSH-to-sandbox enabled once. SSH is an
+  *experimental* sbx feature, so it must be turned on and the daemon restarted
+  before the config is written:
   ```bash
-  sbx setup      # detect host config and prepare Docker Sandboxes  # VERIFY flags
-  sbx ssh        # configure SSH access to sandboxes (experimental) # VERIFY flags
+  sbx settings set platform.allowExperimentalFeatures true
+  sbx settings set feature.ssh true
+  sbx daemon stop
+  sbx daemon start -d
+  sbx ssh setup
   ```
-  If anything is off, `sbx diagnose` reports common issues.
+  `sbx-ide doctor` prints these exact steps if the config is missing. If anything
+  is off, `sbx diagnose` reports common issues. (The **VS Code** target needs
+  none of this — it runs its own sshd on a published loopback port.)
 - Cursor installed; `cursor` CLI on PATH (Cursor → Command Palette → "Shell Command: Install cursor command").
 - For `--vscode`: VS Code with the `code` CLI on PATH and the **Remote-SSH**
   extension (`ms-vscode-remote.remote-ssh`) installed. A dedicated passwordless

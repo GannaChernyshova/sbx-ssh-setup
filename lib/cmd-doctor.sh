@@ -99,12 +99,12 @@ EOF
         ok "SSH config references *${SBX_SSH_SUFFIX} sandboxes (Cursor path)"
       elif [[ "$sbxssh_strict" == 1 ]]; then
         no "no SSH config for *${SBX_SSH_SUFFIX} sandboxes (Cursor needs it)" \
-           "$SBX_BIN setup ssh   # after enabling experimental + feature.ssh"
-        hint "Full one-time setup:"
+           "run the one-time setup below (enables the experimental SSH feature + restarts the daemon)"
+        hint "One-time SSH-to-sandbox setup:"
         while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
       else
         meh "no SSH config for *${SBX_SSH_SUFFIX} sandboxes (only the Cursor target needs it)" \
-            "$SBX_BIN setup ssh   # run if you use --cursor"
+            "run '${SBX_IDE_PROG:-sbx-ide} doctor --target cursor' to see the one-time setup steps"
       fi
     fi
 

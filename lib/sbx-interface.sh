@@ -62,7 +62,7 @@
 : "${SBX_KNOWN_AGENTS:=claude codex copilot cursor gemini shell}"
 
 # --- SSH host suffix ------------------------------------------------------
-# `sbx setup ssh` writes an SSH config making sandboxes reachable as
+# `sbx ssh setup` writes an SSH config making sandboxes reachable as
 # <name><suffix>. VERIFY-ON-HOST: confirm the suffix (grep the Host line in
 # the ssh config sbx writes — likely `Host *.sbx`).
 : "${SBX_SSH_SUFFIX:=.sbx}"
@@ -106,15 +106,18 @@
 #   run-detach : `sbx run --detached <agent> --name <name> <path>` (also wakes)
 #   create     : `sbx create <agent> --name <name> <path>` then wake via run -d
 
-# The one-time SSH enablement steps, one clean command per line (callers render
-# these as copy/paste commands). `sbx --help` shows `setup` ("prepare Docker
-# Sandboxes") and `ssh` ("Configure SSH access to sandboxes (experimental)") as
-# real subcommands; there is no `sbx config`. VERIFY-ON-HOST: confirm the exact
-# invocation/flags against `sbx setup --help` and `sbx ssh --help`, then correct.
+# The one-time SSH-to-sandbox enablement steps (needed by the CURSOR target;
+# VS Code uses its own sshd + published port, so it needs none of this). SSH is
+# an EXPERIMENTAL sbx feature, so it must be turned on and the daemon restarted
+# before `sbx ssh setup` will write the SSH config. HOST-VERIFIED sequence
+# (sbx >= 0.35.0). Callers render each line as a copy/paste command.
 sbx_ssh_setup_steps() {
   cat <<EOF
-${SBX_BIN} setup
-${SBX_BIN} ssh
+${SBX_BIN} settings set platform.allowExperimentalFeatures true
+${SBX_BIN} settings set feature.ssh true
+${SBX_BIN} daemon stop
+${SBX_BIN} daemon start -d
+${SBX_BIN} ssh setup
 EOF
 }
 

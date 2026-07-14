@@ -141,10 +141,13 @@ SBX_STUB_RUN_LOG="$runlog" sbx-ide open "$WORK/stp" >/dev/null 2>&1
 check "stopped sandbox is now running"     "grep -q '^stp	shell	running	' '$SBX_STUB_STATE'"
 check "woke it with run --detached --name" "grep -Eq -- '--detached.*--name stp|--name stp.*--detached' '$runlog'"
 
-echo "== sbx-ide open: SSH not set up prints setup steps =="
+echo "== sbx-ide open: SSH not set up prints the real setup steps (Cursor) =="
 seed
 out="$(SBX_STUB_SSH_UNREACHABLE=1 sbx-ide open "$WORK/proj" 2>&1 || true)"
-check "mentions the ssh enablement command" "grep -q 'sbx ssh' <<< \"\$out\""
+check "enables the experimental feature" "grep -q 'allowExperimentalFeatures true' <<< \"\$out\""
+check "enables feature.ssh"              "grep -q 'feature.ssh true' <<< \"\$out\""
+check "restarts the daemon"              "grep -q 'daemon start' <<< \"\$out\""
+check "runs sbx ssh setup"               "grep -q 'sbx ssh setup' <<< \"\$out\""
 
 echo "== sbx-ide open --vscode: Remote-SSH to real sshd over a loopback port =="
 seed; mkdir -p "$WORK/proj"; reset_code; : > "$WORK/exec.log"

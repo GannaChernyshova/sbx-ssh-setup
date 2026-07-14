@@ -106,6 +106,6 @@ Optionally show `sbx-ide ls` flagging an `⚠ orphan` and `sbx-ide clean` removi
 ### If something breaks live
 
 - Cursor didn't open → the command prints the exact `cursor --folder-uri …` line; paste it.
-- SSH error → `sbx-ide doctor` shows the one-time setup steps; you likely skipped `sbx setup` / `sbx ssh`.
+- SSH error → `sbx-ide doctor` shows the one-time setup steps; you likely skipped enabling the experimental SSH feature + `sbx ssh setup` (Cursor path only).
 - Wrong/missing files → you're in an orphan; `sbx-ide ls` will show it. Recover with `sbx-ide open <repo>`.
 - Fall back to `make demo` for a fully stubbed, network-free rehearsal of the same beats.

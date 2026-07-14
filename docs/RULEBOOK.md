@@ -95,12 +95,12 @@ If you ever see your files are missing or the folder path contains `/home/agent/
 
 - **The mount is read-write to the host.** An agent can modify/delete anything under the mounted directory, and changes hit the host immediately. Mount narrowly; keep the repo in version control.
 - **Not a security boundary against a determined kernel-level attacker.** It's container isolation, not a hardened VM/hypervisor. Treat it as strong workflow isolation, not a malware detonation chamber.
-- **SSH-to-sandbox is local-only.** Sandboxes are reachable from *this host* via the SSH config `sbx setup ssh` writes (a wildcard `Host *.sbx` + ProxyCommand). They are not remote-accessible, and they do **not** appear in the IDE's host picker — they must be launched via `sbx-ide open`/CLI.
+- **SSH-to-sandbox is local-only.** Sandboxes are reachable from *this host* via the SSH config `sbx ssh setup` writes (a wildcard `Host *.sbx` + ProxyCommand). They are not remote-accessible, and they do **not** appear in the IDE's host picker — they must be launched via `sbx-ide open`/CLI.
 - **The VS Code target runs an sshd inside the sandbox and publishes it to `127.0.0.1` only.** `sbx-ide open --vscode` starts a real OpenSSH server in the sandbox (needed because sbx microVMs can't use Dev Containers attach, and VS Code Remote-SSH retry-loops over sandboxd's emulated SSH — see [`VSCODE-NOTES.md`](VSCODE-NOTES.md)). Auth is **key-only**, the port binds **loopback only** (never reachable off the machine), and the `~/.ssh/config` block is wrapped in `# sbx-ide ssh` markers so `sbx-ide clean` / `make uninstall` remove exactly what was added. Cursor needs none of this.
 
 ### Policy
 
-- **Version pinning.** Require `sbx >= 0.35` (SSH-to-sandbox support). Pin a known-good version org-wide; the SSH feature is **experimental** (`sbx ssh` is marked experimental in `sbx --help`) — track changes across upgrades and re-run `sbx-ide doctor --verify` after each.
+- **Version pinning.** Require `sbx >= 0.35.0` (SSH-to-sandbox support). Pin a known-good version org-wide; the SSH feature is **experimental** — enabling it takes `sbx settings set platform.allowExperimentalFeatures true` + `feature.ssh true` + a daemon restart before `sbx ssh setup` (only needed for the Cursor target). Track changes across upgrades and re-run `sbx-ide doctor --verify` after each.
 - **Validate assumptions per version.** This toolkit isolates uncertain CLI details behind `# VERIFY-ON-HOST` variables in `lib/sbx-interface.sh`; run `sbx-ide doctor --verify` after any `sbx` upgrade to catch flag/format drift.
 - **Naming convention.** One sandbox per repo, named after the repo (`sbx-ide open` derives and sanitizes this, suffixing `-2`, `-3` on collision). Discourage hand-named sandboxes.
 - **Lifecycle.** Clean stopped/orphan sandboxes after **N days** (suggest 7). `sbx-ide clean` is safe to run on a schedule with `--yes`; stopped sandboxes' host files are never deleted.
