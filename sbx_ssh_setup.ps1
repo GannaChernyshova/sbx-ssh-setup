@@ -97,16 +97,88 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  The sandbox may still be starting — wait a few seconds and retry: ssh $sbxHost"
 }
 
-# ── 3. Print copy-paste-ready Codex values (and copy hostname to clipboard) ──
+# ── Register a concrete SSH alias so Codex auto-discovers this sandbox ───────
+# Codex enumerates *concrete* Host aliases in ~/.ssh/config and ignores the
+# pattern-only 'Host *.sbx' that sbx manages. Adding an (empty) concrete alias
+# named after this sandbox makes the connection appear in Codex automatically;
+# all connection settings are still inherited from 'Host *.sbx' via `ssh -G`.
+# Windows OpenSSH reads %USERPROFILE%\.ssh\config; fall back to $HOME elsewhere.
+$sshHome   = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+$sshDir    = Join-Path $sshHome ".ssh"
+$sshConfig = Join-Path $sshDir "config"
+$beginMark = "# >>> sbx-codex $sbxHost >>>"
+$endMark   = "# <<< sbx-codex $sbxHost <<<"
+
+if (-not (Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir -Force | Out-Null }
+$lines = @()
+if (Test-Path $sshConfig) { $lines = @(Get-Content -LiteralPath $sshConfig) }
+
+# Drop any previous block for this host so re-runs stay idempotent.
+$filtered = New-Object System.Collections.Generic.List[string]
+$skip = $false
+foreach ($line in $lines) {
+    if ($line -eq $beginMark) { $skip = $true; continue }
+    if ($line -eq $endMark)   { $skip = $false; continue }
+    if (-not $skip) { $filtered.Add($line) }
+}
+$block = @(
+    $beginMark,
+    "# Concrete alias so Codex auto-discovers this sandbox (it ignores 'Host *.sbx').",
+    "# Settings are inherited from the sbx-managed 'Host *.sbx' block via 'ssh -G'.",
+    "Host $sbxHost",
+    $endMark
+)
+Set-Content -LiteralPath $sshConfig -Value (@($filtered) + $block) -Encoding ascii
+Write-Host ""
+Write-Host "==> Registered SSH alias '$sbxHost' in ~/.ssh/config for Codex auto-discovery."
+
+# ── Work out the project directory inside the sandbox (the start directory) ──
+# On macOS/Linux the host working tree is mounted at the SAME absolute path in
+# the sandbox, so the host path is the remote path. On Windows the host path is
+# a C:\ path that does not exist in the Linux sandbox, so we fall back to the
+# sandbox's default login directory and tell the user to browse to their mount.
+# NOTE: single-quote the remote path — escaped double quotes get mangled by
+# PowerShell 5.1 when building the native ssh.exe command line.
+$hostPath   = (Get-Location).Path
+$remoteDir  = $hostPath
+$mountKnown = $true
+& ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost "test -d '$hostPath'" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    $mountKnown = $false
+    $alt = (& ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost 'pwd' 2>$null)
+    if ($alt) { $remoteDir = ($alt | Select-Object -First 1).Trim() }
+}
+if ($mountKnown) {
+    & ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost "mkdir -p '$remoteDir'" 2>$null
+    Write-Host "==> Project directory ready in sandbox: $remoteDir"
+} else {
+    Write-Host "==> Could not map this Windows path into the sandbox; the sandbox's default"
+    Write-Host "    directory is '$remoteDir'. In Codex, browse to your mounted project folder."
+}
+
+# ── Register the connection in the Codex app via its supported deep link ─────
+# codex://settings/connections/ssh/add?name=<alias> — the name must match the
+# Host alias above. This makes the Codex app add/enable the connection without
+# a manual Settings -> Connections -> Refresh.
+$deepLink = "codex://settings/connections/ssh/add?name=$sbxHost"
+try { Start-Process $deepLink } catch {}
+
+# ── Copy the remote project path to the clipboard (pasted into Codex) ────────
 $clipNote = ""
-try { Set-Clipboard -Value $sbxHost; $clipNote = "  (copied to clipboard)" } catch {}
+try { Set-Clipboard -Value $remoteDir; $clipNote = "  (copied to clipboard)" } catch {}
+$folderLine = if ($mountKnown) { "   3. Set the project folder to:" } else { "   3. Set the project folder (browse from the sandbox default below):" }
 
 Write-Host ""
-Write-Host "OK Sandbox '$SbxName' is ready."
+Write-Host "OK Sandbox '$SbxName' is ready and registered for Codex."
 Write-Host ""
-Write-Host "Add this connection in Codex (Settings -> Connections -> Add -> Add manually):"
-Write-Host "   Display name:  $SbxName"
-Write-Host "   Hostname:      $sbxHost$clipNote"
+Write-Host "In Codex, just create the project:"
+Write-Host "   1. New project -> Remote."
+Write-Host "   2. Pick the connection '$sbxHost'. It should already be listed (registered"
+Write-Host "      via the Codex deep link). If not, open this link or Refresh Settings ->"
+Write-Host "      Connections:  $deepLink"
+Write-Host $folderLine
+Write-Host "        $remoteDir$clipNote"
+Write-Host "   4. Click Add project, then start coding."
 Write-Host ""
-Write-Host "Or connect from a terminal:  ssh $sbxHost"
+Write-Host "Terminal access:  ssh $sbxHost"
 Write-Host "Full Codex UI walkthrough: docs/codex.md"
