@@ -129,15 +129,45 @@ Encoded as `SBX_*` variables in `lib/sbx-interface.sh` (override via env):
   name).
 - [ ] **macOS TMPDIR fix** is still needed for your VS Code version.
 
-## Findings log (fill in on the host)
+## Findings log
 
-```
-Date / sbx version / VS Code + Remote-SSH version:
-WORKS:
-  - <what connected cleanly, no retry-loop>
-CAVEATS:
-  - <first-connect download time, TMPDIR, agent choice, …>
-DOESN'T WORK (and why):
-  - Dev Containers attach — sbx sandboxes are microVMs; no container to attach to.
-  - Remote-SSH over sandboxd's *.sbx — retry-loops (~0.5s exec per forwarded channel).
-```
+**2026-07-14 — macOS.** sbx v0.35.x (SSH-to-sandbox), default `shell` agent.
+_(Exact `sbx version` and VS Code/Remote-SSH build not captured — worth pinning on the next run.)_
+
+**WORKS**
+- A fresh sandbox created with the bundled `remote-ssh` kit boots a real `sshd`
+  on `:22` (`pgrep -ax sshd` shows the listener), we publish it to
+  `127.0.0.1:<port>`, and `code --remote ssh-remote+sbx-<name> <ws>` **connects
+  and stays connected — no ~5 s reconnect loop.** This is the whole win over
+  sandboxd's emulated SSH.
+- Kit applied cleanly: `/etc/ssh/sshd_config.d/10-sbx-ide.conf` present,
+  `~/.ssh/authorized_keys` written (mode 600), proxy-env synced.
+- `sbx ports <name> --publish 127.0.0.1:<port>:22/tcp` binds loopback and shows
+  as `127.0.0.1  <port>  22  tcp`; our parser reads it back for reuse.
+- The dedicated auto-generated passwordless key (`~/.ssh/sbx-vscode`), pinned via
+  `IdentityFile`/`IdentitiesOnly`, gives promptless `BatchMode` auth — no agent,
+  no passphrase, and the user's GitHub key never enters the sandbox.
+
+**CAVEATS**
+- **First connect downloads ~140 MB** of VS Code server into the sandbox (slow
+  behind the egress proxy). Pre-seeding (`SBX_VSCODE_PRESEED=1`, default) helps.
+- **macOS `TMPDIR`**: the launch sets `TMPDIR=/tmp` to avoid the unix-socket-path
+  reconnect bug (vscode-remote-release #11672/#11676). Only helps a *freshly*
+  launched editor — quit VS Code fully first if it's already open.
+- **A sandbox must be created WITH the kit.** `--kit` applies only at create
+  time, so one made before `--vscode` (or by another tool) has no sshd; sbx-ide
+  detects this and asks you to recreate it.
+- **Passphrase keys**: the original attempt used a passphrase-protected GitHub
+  key not in `ssh-agent`, which failed the `BatchMode` probe even though the
+  connection was fine. Fixed two ways — the connection-vs-auth fallback, and
+  (default) the dedicated passwordless key above.
+- `ss`/`netstat` aren't in the sandbox image (diagnostics only; `pgrep`/`/proc`
+  work).
+- Default `shell` agent worked with the `kind: mixin` kit; the source PoC used
+  the `claude` agent for its credential wiring, which our proxy-env sync covers.
+
+**DOESN'T WORK (and why)**
+- **Dev Containers attach** — sbx sandboxes are **microVMs**; there is no Docker
+  container to attach to (host-confirmed: `docker ps` empty).
+- **Remote-SSH over sandboxd's `*.sbx`** — retry-loops (~0.5 s `docker exec` per
+  forwarded channel lands on VS Code's primary port-forward every reconnect).

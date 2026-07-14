@@ -1,5 +1,13 @@
 # sbx-ide
 
+> [!WARNING]
+> **Status: stopgap / experimental — verify before you trust it.**
+> - **Pinned to `sbx` v0.35's SSH-to-sandbox behavior.** Later `sbx` releases may change flags, output, or the SSH/microVM model and **break this toolkit**. Re-run `sbx-ide doctor --verify` after any `sbx` upgrade, and treat the `# VERIFY-ON-HOST` notes in [`lib/sbx-interface.sh`](lib/sbx-interface.sh) as live assumptions, not guarantees.
+> - **Largely AI-generated ("vibe-coded").** Read the scripts before running them anywhere you care about, and **don't unilaterally trust the output.** It ships tests (`make check`) and host-validation docs precisely because the behavior needs verifying, not assuming.
+> - **Only ever run on macOS.** Windows and Linux are **untested** and may not work — path canonicalization, `/dev/tcp`, the macOS `TMPDIR` workaround, `~/.ssh/config` edits, and port publishing all have OS-specific edges.
+>
+> This is a prospect/demo aid, not a supported product. `make uninstall` is a clean, auditable teardown for exactly that reason.
+
 **Give an AI coding agent full autonomy — safely — by putting your IDE inside a Docker Sandbox.** `sbx-ide` is a tiny toolkit that makes [Docker Sandboxes](https://docs.docker.com/) (the `sbx` CLI, v0.35+) the default, one-command way to open any project in your editor, isolated in a throwaway container whose only shared surface with your machine is the one directory you mounted. Turn on your editor's "run everything" auto-mode without flinching: the agent, the editor server, and every terminal it spawns all execute *inside* the sandbox, so the blast radius is exactly the mounted repo — not your home directory, keychain, or other projects. The flagship command, `sbx-ide open <path>`, creates-or-reuses the right sandbox, verifies connectivity, and launches your IDE already connected to the right folder — and it refuses the footguns (orphan sandboxes, over-broad mounts, name collisions) instead of letting you fall into them. Speed and security stop being a tradeoff.
 
 **Why `sbx-ide` and not `sbx-cursor`?** The toolkit wraps IDE-in-sandbox workflows and nothing else — the name shouldn't presume more. It also deliberately avoids squatting on the bare `sbx-*` namespace the product itself may one day claim (e.g. a future `sbx ssh <ide>`). One command, subcommands underneath.
