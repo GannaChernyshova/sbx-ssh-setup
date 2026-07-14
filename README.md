@@ -2,9 +2,9 @@
 
 > [!WARNING]
 > **Status: stopgap / experimental — verify before you trust it.**
-> - **Pinned to `sbx` v0.35's SSH-to-sandbox behavior.** Later `sbx` releases may change flags, output, or the SSH/microVM model and **break this toolkit**. Re-run `sbx-ide doctor --verify` after any `sbx` upgrade, and treat the `# VERIFY-ON-HOST` notes in [`lib/sbx-interface.sh`](lib/sbx-interface.sh) as live assumptions, not guarantees.
+> - **Future versions of  `sbx` may behave unexpected..** Later `sbx` releases may change flags, output, or the SSH/microVM model and **break this toolkit**. This has only been tested on **v0.35** Re-run `sbx-ide doctor --verify` after any `sbx` upgrade, and treat the `# VERIFY-ON-HOST` notes in [`lib/sbx-interface.sh`](lib/sbx-interface.sh) as live assumptions, not guarantees.
 > - **Largely AI-generated ("vibe-coded").** Read the scripts before running them anywhere you care about, and **don't unilaterally trust the output.** It ships tests (`make check`) and host-validation docs precisely because the behavior needs verifying, not assuming.
-> - **Only ever run on macOS.** Windows and Linux are **untested** and may not work — path canonicalization, `/dev/tcp`, the macOS `TMPDIR` workaround, `~/.ssh/config` edits, and port publishing all have OS-specific edges.
+> - **Only Mac-tested as of now.** Windows and Linux are **untested** and likely will not work — path canonicalization, `/dev/tcp`, the macOS `TMPDIR` workaround, `~/.ssh/config` edits, and port publishing all have OS-specific edges.
 >
 > This is a prospect/demo aid, not a supported product. `make uninstall` is a clean, auditable teardown for exactly that reason.
 
