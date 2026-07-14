@@ -45,7 +45,7 @@ cd /path/to/acme-api && sbx-ide open ./   # or from inside the project
 
 | Command | What it does |
 |---|---|
-| `sbx-ide open <path> [--cursor\|--vscode] [--name <name>]` | The golden path. Create-or-reuse one sandbox per project, verify connectivity, launch the IDE pre-connected to the right folder. Idempotent. |
+| `sbx-ide open <path> [--cursor\|--vscode\|--codex] [--name <name>]` | The golden path. Create-or-reuse one sandbox per project, verify connectivity, launch the IDE pre-connected to the right folder (Codex: register a Codex Desktop remote connection). Idempotent. |
 | `sbx-ide set-default <cursor\|vscode>` | Persist your default IDE. Set it once, drop the flag. |
 | `sbx-ide doctor [--target cursor\|vscode]` | Health check with ✅/❌ and the exact fix per failure. `--verify` validates the toolkit's host assumptions. |
 | `sbx-ide ls` | Human-friendly sandbox list; flags orphans and stopped sandboxes; prints a copy/paste `sbx-ide open` per row. |
@@ -81,6 +81,7 @@ Terminals in the sandbox stay a **plain shell** — we don't auto-launch the age
 |---|---|---|
 | **Cursor** | ✅ Supported | SSH-remote folder URI over sbx's single stable `*.sbx` tunnel (`cursor --folder-uri vscode-remote://ssh-remote+…`). |
 | **VS Code** | ✅ Supported | **Real `sshd` in the sandbox + published loopback port + Remote-SSH** (`code --remote ssh-remote+sbx-<name> …`), via the bundled `remote-ssh` kit and a dedicated auto-generated passwordless key. See [`docs/VSCODE-NOTES.md`](docs/VSCODE-NOTES.md). |
+| **Codex** | ✅ Supported (one manual paste) | Codex Desktop remote connection over sbx's single stable `*.sbx` tunnel: a concrete `Host <name>.sbx` alias for auto-discovery + the `codex://…/ssh/add` connection deep link. The remote **folder path** is the one step Codex can't automate ([openai/codex#21554](https://github.com/openai/codex/issues/21554)) — it's copied to your clipboard to paste. See [`docs/CODEX-NOTES.md`](docs/CODEX-NOTES.md). |
 
 **Why VS Code runs its own sshd instead of attaching or using sandboxd's SSH:** sbx sandboxes are **microVMs**, so VS Code's Dev Containers "attach to running container" has nothing to attach to. And VS Code Remote-SSH over sandboxd's *emulated* `*.sbx` endpoint retry-loops: sandboxd services each forwarded channel with a fresh ~0.5 s `docker exec`, and VS Code re-opens its primary port-forward on every reconnect, so it perceives the link as dead (~5 s loop). Cursor is fine because it keeps one long-keepalive tunnel. The fix `sbx-ide` ships: run a **real OpenSSH server inside the sandbox** (bundled kit), publish its `:22` to a host **loopback** port, and point Remote-SSH at `127.0.0.1:<port>` — a real sshd where opening a channel is sub-millisecond. There is **no fallback** to sandboxd's SSH: if the setup can't be validated, `sbx-ide open --vscode` fails with an explanation. Full rationale, security surface, and the macOS `TMPDIR` gotcha in [`docs/VSCODE-NOTES.md`](docs/VSCODE-NOTES.md).
 
@@ -112,6 +113,7 @@ The VS Code support (real `sshd` in the sandbox + published loopback port + Remo
 - 🎬 [**docs/DEMO.md**](docs/DEMO.md) — the 10-minute prospect demo script.
 - ✅ [**docs/HOST-VALIDATION.md**](docs/HOST-VALIDATION.md) — validate the toolkit on a real host.
 - 🧩 [**docs/VSCODE-NOTES.md**](docs/VSCODE-NOTES.md) — the VS Code attach path: why, how, and what to verify.
+- 🤖 [**docs/CODEX-NOTES.md**](docs/CODEX-NOTES.md) — the Codex Desktop connection path: concrete alias, deep link, and the one manual paste.
 
 ## Develop
 

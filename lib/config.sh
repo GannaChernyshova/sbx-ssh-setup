@@ -103,6 +103,28 @@ ssh_config_write_block() {
   chmod 600 "$f" 2>/dev/null || true
 }
 
+# ssh_config_write_codex_alias <alias> : (re)write an EMPTY concrete Host block
+# for <alias> so Codex auto-discovers the sandbox — it enumerates concrete Host
+# aliases and ignores the pattern-only `Host *<suffix>` block sbx manages. The
+# block carries NO options: every setting is inherited from that managed block
+# via `ssh -G`, so nothing is duplicated (and a managed value is never copied out
+# of place). Wrapped in the same per-alias markers as the VS Code block, so
+# `clean`/uninstall find and remove it with the existing machinery.
+ssh_config_write_codex_alias() {
+  local alias="$1" f
+  f="$(ssh_config_path)"
+  mkdir -p "$(dirname "$f")"; chmod 700 "$(dirname "$f")" 2>/dev/null || true
+  ssh_config_remove_block "$alias"
+  {
+    printf '\n%s %s\n' "$SBX_SSH_BLOCK_BEGIN" "$alias"
+    printf '# Concrete alias so Codex auto-discovers this sandbox (it ignores '\''Host *%s'\'').\n' "$SBX_SSH_SUFFIX"
+    printf '# All options inherit from the sbx-managed '\''Host *%s'\'' block via '\''ssh -G'\''.\n' "$SBX_SSH_SUFFIX"
+    printf 'Host %s\n' "$alias"
+    printf '%s %s\n' "$SBX_SSH_BLOCK_END" "$alias"
+  } >> "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
 # ssh_config_our_aliases : list aliases we have blocks for (for uninstall report).
 ssh_config_our_aliases() {
   local f; f="$(ssh_config_path)"; [[ -f "$f" ]] || return 0

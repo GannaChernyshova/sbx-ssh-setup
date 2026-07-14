@@ -88,9 +88,11 @@ EOF
     # returns sbx's own output so we can show the real reason on failure.
     if rm_out="$(sbx_rm "$name")"; then
       success "removed $name"
-      # Also drop the VS Code ~/.ssh/config block we may have written for it
-      # (its published loopback port goes away with the sandbox). Best-effort.
+      # Also drop any ~/.ssh/config blocks we may have written for it — the VS
+      # Code loopback block (its published port goes away with the sandbox) and
+      # the Codex concrete alias. Best-effort.
       ssh_config_remove_block "${SBX_VSCODE_HOST_PREFIX}${name}"
+      ssh_config_remove_block "${name}${SBX_SSH_SUFFIX}"
       removed=$((removed+1))
     else
       err "failed to remove $name"

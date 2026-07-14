@@ -45,6 +45,24 @@
 : "${SBX_SSH_BLOCK_BEGIN:=# sbx-ide ssh BEGIN}"
 : "${SBX_SSH_BLOCK_END:=# sbx-ide ssh END}"
 
+# --- Codex — concrete SSH alias + connection deep link --------------------
+# Codex Desktop connects to a sandbox over sandboxd's SAME emulated *.sbx tunnel
+# that Cursor uses (a single long-keepalive connection — no retry-loop), so it
+# needs the same one-time SSH-to-sandbox setup and NONE of the VS Code sshd/port
+# machinery. Two Codex-specific wrinkles the target handles:
+#   1. Codex enumerates *concrete* `Host` aliases in ~/.ssh/config and IGNORES
+#      the pattern-only `Host *.sbx` block sbx manages, so it never auto-discovers
+#      a sandbox from that alone. We write an EMPTY concrete `Host <name>.sbx`
+#      alias (all options inherited from the managed block via `ssh -G`) so the
+#      connection shows up. Wrapped in our per-alias ssh_config markers.
+#   2. We actively register the connection via Codex's supported deep link
+#      `codex://settings/connections/ssh/add?name=<alias>` (opened with the OS
+#      URL handler), so the user doesn't have to Refresh Settings → Connections.
+# The one thing that is NOT automatable is the remote PROJECT folder path
+# (openai/codex#21554) — the target copies it to the clipboard to paste.
+# VERIFY-ON-HOST: the deep-link scheme/path as the installed Codex build accepts it.
+: "${SBX_CODEX_DEEPLINK_PREFIX:=codex://settings/connections/ssh/add?name=}"
+
 # --- Versioning -----------------------------------------------------------
 : "${SBX_MIN_VERSION:=0.35}"   # SSH-to-sandbox support landed in 0.35.
 

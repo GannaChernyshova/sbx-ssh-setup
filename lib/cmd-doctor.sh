@@ -15,13 +15,13 @@ cmd_doctor() {
 ${C_BOLD}$PROG${C_RESET} — health checks and assumption verification for sbx + IDEs
 
 ${C_BOLD}USAGE${C_RESET}
-  $PROG [--verify] [--fix] [--target cursor|vscode] [--setup-ssh [--yes]]
+  $PROG [--verify] [--fix] [--target cursor|vscode|codex] [--setup-ssh [--yes]]
 
 ${C_BOLD}OPTIONS${C_RESET}
   --verify           Check every VERIFY-ON-HOST assumption against the real CLI.
   --fix              Offer to remove any orphan sandboxes found (prompts).
-  --target <t>       Check only IDE target <t> (cursor|vscode), strictly.
-  --setup-ssh        Enable SSH-to-sandbox for the Cursor target (runs the
+  --target <t>       Check only IDE target <t> (cursor|vscode|codex), strictly.
+  --setup-ssh        Enable SSH-to-sandbox for the *.sbx-tunnel targets (Cursor/Codex;
                      experimental-feature + daemon-restart steps; prompts first).
   --yes              With --setup-ssh, skip the confirmation prompt.
   -h, --help         Show this help.
@@ -91,25 +91,39 @@ EOF
     local default_target default_source
     IFS=$'\t' read -r default_target default_source < <(resolve_target "")
 
-    # 3. sandboxd SSH config — REQUIRED by Cursor, IRRELEVANT to VS Code (which
-    #    uses its own sshd on a published port, not sandboxd's *.sbx endpoint).
-    #    So it's a hard check only when Cursor is (or is being) used.
-    local sbxssh_strict=0
-    if [[ "$default_target" == "cursor" || " $SBX_IDE_TARGETS " == *" cursor "* && -z "$ONLY_TARGET" ]]; then
-      [[ "$default_target" == "cursor" ]] && sbxssh_strict=1
+    # 3. sandboxd SSH config — REQUIRED by targets that use the *.sbx tunnel
+    #    (Cursor, Codex), IRRELEVANT to VS Code (its own sshd on a published
+    #    port). So it's a hard check only when such a target is (or is being)
+    #    used, decided via target_needs_sandboxd_ssh — no hard-coded IDE names.
+    local ssh_targets="" first_ssh_target="" _t
+    for _t in $SBX_IDE_TARGETS; do
+      if target_needs_sandboxd_ssh "$_t"; then
+        [[ -n "$ssh_targets" ]] && ssh_targets+="/"
+        ssh_targets+="$("target_${_t}_label")"
+        [[ -z "$first_ssh_target" ]] && first_ssh_target="$_t"
+      fi
+    done
+    local sbxssh_strict
+    if [[ -n "$ONLY_TARGET" ]]; then
+      target_needs_sandboxd_ssh "$ONLY_TARGET" && sbxssh_strict=1 || sbxssh_strict=-1
+    elif target_needs_sandboxd_ssh "$default_target"; then
+      sbxssh_strict=1
+    elif [[ -n "$ssh_targets" ]]; then
+      sbxssh_strict=0     # default self-serves SSH, but another target needs it
+    else
+      sbxssh_strict=-1    # no registered target uses the *.sbx tunnel
     fi
-    [[ "$ONLY_TARGET" == "vscode" ]] && sbxssh_strict=-1   # skip entirely
     if [[ "$sbxssh_strict" != "-1" ]]; then
       if ssh_config_has_suffix; then
-        ok "SSH config references *${SBX_SSH_SUFFIX} sandboxes (Cursor path)"
+        ok "SSH config references *${SBX_SSH_SUFFIX} sandboxes ($ssh_targets path)"
       elif [[ "$sbxssh_strict" == 1 ]]; then
-        no "no SSH config for *${SBX_SSH_SUFFIX} sandboxes (Cursor needs it)" \
+        no "no SSH config for *${SBX_SSH_SUFFIX} sandboxes ($ssh_targets need it)" \
            "run the one-time setup below (enables the experimental SSH feature + restarts the daemon)"
         hint "One-time SSH-to-sandbox setup:"
         while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
       else
-        meh "no SSH config for *${SBX_SSH_SUFFIX} sandboxes (only the Cursor target needs it)" \
-            "run '${SBX_IDE_PROG:-sbx-ide} doctor --target cursor' to see the one-time setup steps"
+        meh "no SSH config for *${SBX_SSH_SUFFIX} sandboxes (only $ssh_targets need it)" \
+            "run '${SBX_IDE_PROG:-sbx-ide} doctor --target ${first_ssh_target}' to see the one-time setup steps"
       fi
     fi
 
@@ -300,9 +314,15 @@ EOF
     vnote "loopback publish form" "confirm 'sbx $SBX_CMD_PORTS <name> --publish 127.0.0.1:<port>:22/tcp' binds loopback only"
     vnote "kit installs sshd" "confirm the remote-ssh kit boots sshd on :22 (ssh <alias> true succeeds) — see docs/VSCODE-NOTES.md"
 
+    # Codex (concrete alias + connection deep link) — host-only checks.
+    heading "Codex Desktop (concrete *.sbx alias + connection deep link)"
+    vnote "connection deep link" "confirm Codex registers a connection when '${SBX_CODEX_DEEPLINK_PREFIX}<alias>' is opened"
+    vnote "concrete-alias discovery" "confirm Codex lists 'Host <name>${SBX_SSH_SUFFIX}' and an empty block inherits from 'Host *${SBX_SSH_SUFFIX}' (ssh -G <name>${SBX_SSH_SUFFIX})"
+    vnote "folder path (manual)" "registering the remote project folder is not automatable (openai/codex#21554) — see docs/CODEX-NOTES.md"
+
     heading "Verification summary"
     if [[ "$DIFFS" -eq 0 ]]; then
-      success "All auto-checkable assumptions match this host. Complete the VS Code items above manually."
+      success "All auto-checkable assumptions match this host. Complete the VS Code + Codex items above manually."
     else
       warn "$DIFFS assumption(s) differ. Update lib/sbx-interface.sh (or export the"
       hint "corresponding SBX_* variable) so the detected value is used, then re-run."
@@ -314,7 +334,7 @@ EOF
   # SETUP-SSH MODE — enable SSH-to-sandbox for the Cursor target (opt-in).
   # ==========================================================================
   run_setup_ssh() {
-    heading "Enable SSH-to-sandbox (needed by the Cursor target only)"
+    heading "Enable SSH-to-sandbox (needed by the *.sbx-tunnel targets: Cursor/Codex)"
     sbx_present || die "sbx not found on PATH — install it first."
     if ssh_config_has_suffix; then
       success "SSH config for *${SBX_SSH_SUFFIX} already present — nothing to do."

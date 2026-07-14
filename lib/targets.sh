@@ -3,11 +3,12 @@
 #
 # =============================== EXTENSION POINT ============================
 # Each IDE target is a set of shell functions named target_<id>_<hook>. To add
-# a target (for example the Codex IDE integration, now OWNED BY ANOTHER
-# ENGINEER and intentionally not shipped here), add its <id> to SBX_IDE_TARGETS
-# and define its hooks — mirroring the two rows already present. The dispatcher,
-# doctor, open, and clean commands all drive targets through these hooks; this
-# is the seam their work slots back into.
+# a target, add its <id> to SBX_IDE_TARGETS and define its hooks — mirroring the
+# three rows already present (Cursor, VS Code, Codex). The dispatcher, doctor,
+# open, and clean commands all drive targets through these hooks; this is the
+# seam their work slots into. The Codex row (ROW 3) is a worked example of a
+# target that does NOT launch a folder-URI binary: it registers a Codex Desktop
+# remote connection instead, showing the launch hook can own any connect flow.
 # ===========================================================================
 #
 # Hooks:
@@ -23,13 +24,24 @@
 #                                           open it; owns everything IDE-specific
 #                                           after the sandbox exists.
 
-: "${SBX_IDE_TARGETS:=cursor vscode}"
+: "${SBX_IDE_TARGETS:=cursor vscode codex}"
 
 # target_known <id> : true if <id> is a registered target.
 target_known() {
   local t
   for t in $SBX_IDE_TARGETS; do [[ "$t" == "$1" ]] && return 0; done
   return 1
+}
+
+# target_needs_sandboxd_ssh <id> : true if the target reaches the sandbox over
+# sandboxd's emulated *.sbx tunnel (Cursor, Codex) and therefore depends on the
+# one-time SSH-to-sandbox setup. VS Code does NOT (it runs its own sshd on a
+# published loopback port), so it returns false. Optional per-target hook
+# `target_<id>_needs_sandboxd_ssh`; absent ⇒ false. Used by open/doctor to decide
+# how strictly to check the *.sbx SSH config.
+target_needs_sandboxd_ssh() {
+  declare -F "target_${1}_needs_sandboxd_ssh" >/dev/null 2>&1 || return 1
+  "target_${1}_needs_sandboxd_ssh"
 }
 
 # _launch_success <name> <created> <label> : the closing line after a launch.
@@ -50,6 +62,7 @@ _launch_success() {
 target_cursor_label() { printf 'Cursor'; }
 target_cursor_bin()   { printf '%s' "$CURSOR_BIN"; }
 target_cursor_run_args() { :; }   # no extra sbx-run args
+target_cursor_needs_sandboxd_ssh() { return 0; }   # uses the *.sbx tunnel
 
 target_cursor_uri() {
   local ssh_host="$2" cpath="$3"
@@ -340,4 +353,109 @@ target_vscode_launch() {
   TMPDIR=/tmp "$CODE_BIN" --remote "ssh-remote+${alias}" "$ws" >/dev/null 2>&1 \
     || TMPDIR=/tmp "$CODE_BIN" --remote "ssh-remote+${alias}" "$ws"
   _launch_success "$name" "$created" "VS Code"
+}
+
+# ===========================================================================
+# ROW 3 — Codex  (Codex Desktop, over sandboxd's *.sbx tunnel)
+#
+# Codex is a DESKTOP APP, not a CLI you launch with a folder URI — so this row's
+# launch hook does not run a `--folder-uri`/`--remote` binary. Instead it:
+#   1. verifies the sandbox answers over sandboxd's *.sbx SSH (same tunnel as
+#      Cursor — one long-keepalive connection, no retry-loop), guiding through
+#      the one-time SSH-to-sandbox setup if it isn't reachable yet;
+#   2. writes an EMPTY concrete `Host <name>.sbx` alias so Codex auto-discovers
+#      the connection (it ignores the pattern-only `Host *.sbx` sbx manages);
+#   3. pre-provisions the in-container project directory and fires Codex's
+#      supported connection deep link (codex://settings/connections/ssh/add?name=…)
+#      so the connection appears without a manual Settings → Connections refresh;
+#   4. copies the remote folder path to the clipboard — the ONE step Codex has no
+#      supported automation for (openai/codex#21554) is registering the project
+#      folder, so the user pastes it into "Folder path".
+#
+# ATTRIBUTION: the concrete-alias + deep-link + clipboard flow is adapted from
+# the GannaChernyshova/sbx-ssh-setup Codex integration.
+# ===========================================================================
+target_codex_label() { printf 'Codex'; }
+target_codex_bin()   { printf '%s' "$CURSOR_BIN"; }   # unused (desktop app); satisfies the hook table
+target_codex_run_args() { :; }                        # no extra sbx-run args
+target_codex_needs_sandboxd_ssh() { return 0; }       # uses the *.sbx tunnel
+
+# target_codex_deeplink <alias> : the Codex connection deep link for <alias>.
+target_codex_deeplink() { printf '%s%s' "$SBX_CODEX_DEEPLINK_PREFIX" "$1"; }
+
+target_codex_check() {
+  # $1 = mode (open|doctor). Same checks for both. Nothing here is fatal: Codex
+  # is a desktop app, and if an opener/clipboard tool is missing we simply print
+  # the deep link / folder path for the user to use by hand.
+  if [[ -n "${SBX_URL_OPENER:-}" ]] || have open || have xdg-open || have powershell.exe; then
+    printf 'ok\ta URL handler is available to open the Codex connection deep link\t\n'
+  else
+    printf 'warn\tno URL handler (open/xdg-open) found — the Codex deep link will be printed to open by hand\t\n'
+  fi
+  if [[ -n "${SBX_CLIPBOARD_CMD:-}" ]] || have pbcopy || have wl-copy || have xclip || have clip.exe; then
+    printf 'ok\ta clipboard tool is available to copy the remote folder path\t\n'
+  else
+    printf 'warn\tno clipboard tool (pbcopy/wl-copy/xclip) found — the folder path will be printed to copy by hand\t\n'
+  fi
+}
+
+target_codex_launch() {
+  local name="$1" ws="$2" created="$3" dry_run="$4" no_open="$5" print_uri="$6"
+  local host alias cpath deeplink clip_note=""
+  host="$(ssh_host "$name")"      # <name>.sbx
+  alias="$host"                   # Codex discovers the concrete alias == host
+  deeplink="$(target_codex_deeplink "$alias")"
+
+  if [[ "$dry_run" == 1 ]]; then
+    if [[ "$print_uri" == 1 ]]; then printf '%s\n' "$deeplink"; return 0; fi
+    info "[dry-run] would verify SSH: $SSH_BIN $host"
+    info "[dry-run] would register concrete alias '$alias' in ~/.ssh/config"
+    info "[dry-run] would open the Codex deep link: $deeplink"
+    info "[dry-run] would copy the remote folder path to the clipboard"
+    return 0
+  fi
+
+  # 1. reachable over sandboxd's *.sbx SSH? (same tunnel as Cursor)
+  if ! ssh_reachable "$name"; then
+    err "Sandbox '$name' is not reachable over SSH ($host)."
+    hint "SSH-to-sandbox is a one-time setup. Run these on this host:"
+    while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
+    hint "Then re-run. Diagnose with: ${SBX_IDE_PROG:-sbx-ide} doctor"
+    return 1
+  fi
+  success "SSH reachable: $host"
+
+  # 2. concrete alias so Codex auto-discovers the connection
+  ssh_config_write_codex_alias "$alias"
+  success "Registered SSH alias '$alias' in ~/.ssh/config for Codex auto-discovery."
+
+  # 3. resolve + pre-provision the in-container project folder
+  if cpath="$(container_ws_path "$name" "$ws")"; then :; else
+    warn "Could not confirm the in-container workspace path; using best guess."
+    hint "Verify on host with: ${SBX_IDE_PROG:-sbx-ide} doctor --verify"
+  fi
+  "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=10 "$host" "mkdir -p '$cpath'" >/dev/null 2>&1 || true
+
+  if [[ "$print_uri" == 1 ]]; then printf '%s\n' "$deeplink"; return 0; fi
+
+  if [[ "$no_open" == 1 ]]; then
+    success "Sandbox ready. Finish in Codex:"
+    hint "1. Register the connection (or Settings → Connections → Refresh):"; cmd "$deeplink"
+    hint "2. New project → Remote → connection '$alias' → Folder path:"; cmd "$cpath"
+    return 0
+  fi
+
+  # 4. fire the connection deep link + copy the folder path to paste
+  if open_url "$deeplink"; then
+    info "Opened the Codex connection deep link for '$alias'."
+  else
+    warn "No URL handler available — open this link to register the connection:"; cmd "$deeplink"
+  fi
+  if printf '%s' "$cpath" | clipboard_copy; then clip_note="  (copied to clipboard)"; fi
+
+  success "Sandbox '$name' is ready and registered for Codex."
+  hint "In Codex: New project → Remote → connection '$alias'."
+  hint "Set the project Folder path to:"; cmd "$cpath"
+  [[ -n "$clip_note" ]] && hint "The folder path was copied to your clipboard — just paste it."
+  hint "Terminal access: ssh $host"
 }

@@ -39,6 +39,8 @@ When Cursor opens, point at the title bar / remote indicator ending in `.sbx`.
 
 > **If they ask "does this work with VS Code?"** — Yes: `sbx-ide open <repo> --vscode` attaches VS Code via Dev Containers, or `sbx-ide set-default vscode` makes it the default so the flag disappears. (One honest caveat: VS Code uses container *attach*, not Remote-SSH, because sbx's emulated SSH makes Remote-SSH retry-loop — see `docs/VSCODE-NOTES.md`. Cursor is the fully host-verified path today.)
 
+> **If they ask "does this work with Codex?"** — Yes: `sbx-ide open <repo> --codex` registers the sandbox as a Codex Desktop remote connection (concrete `*.sbx` alias + the `codex://…/ssh/add` deep link) and copies the folder path to your clipboard. One honest caveat: Codex has no supported way to register the remote *project folder* from automation ([openai/codex#21554](https://github.com/openai/codex/issues/21554)), so you paste that one field — see `docs/CODEX-NOTES.md`.
+
 ---
 
 ## 2. Give the agent full autonomy (3 min)

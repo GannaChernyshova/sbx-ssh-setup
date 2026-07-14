@@ -113,6 +113,32 @@ abspath() {
   esac
 }
 
+# open_url <url> : best-effort hand a URL/deep-link to the desktop handler (used
+# by the Codex target to fire its codex:// connection deep link). Returns
+# non-zero if no opener is available, so the caller can print the link instead.
+# SBX_URL_OPENER overrides the opener (a test seam; a command that takes the URL
+# as its sole argument).
+open_url() {
+  local url="$1"
+  if [[ -n "${SBX_URL_OPENER:-}" ]]; then "$SBX_URL_OPENER" "$url" >/dev/null 2>&1; return; fi
+  if have open;     then open "$url"     >/dev/null 2>&1; return; fi   # macOS
+  if have xdg-open; then xdg-open "$url" >/dev/null 2>&1; return; fi   # Linux
+  if have powershell.exe; then powershell.exe -NoProfile -Command "Start-Process '$url'" >/dev/null 2>&1; return; fi
+  return 1
+}
+
+# clipboard_copy : copy stdin to the system clipboard. Returns non-zero if no
+# clipboard tool is available. SBX_CLIPBOARD_CMD overrides the tool (a test seam;
+# a command that reads the value on stdin).
+clipboard_copy() {
+  if [[ -n "${SBX_CLIPBOARD_CMD:-}" ]]; then "$SBX_CLIPBOARD_CMD"; return; fi
+  if have pbcopy; then pbcopy; return; fi                              # macOS
+  if have wl-copy; then wl-copy; return; fi                            # Wayland
+  if have xclip; then xclip -selection clipboard >/dev/null 2>&1; return; fi  # X11
+  if have clip.exe; then clip.exe; return; fi                          # Windows
+  return 1
+}
+
 # tcp_reachable <host> <port> : true if something is listening (bash /dev/tcp).
 # (SBX_STUB_TCP_OPEN=1 forces true — a test seam; unset in real use.)
 tcp_reachable() {

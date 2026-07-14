@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stub URL opener for tests (the Codex deep-link handler). Records the URL it was
+# asked to open so tests can assert the codex:// connection link was fired.
+# Wired in via SBX_URL_OPENER; never opens anything real.
+set -euo pipefail
+LOG="${SBX_STUB_URL_LOG:-${TMPDIR:-/tmp}/sbx-stub-url.log}"
+printf '%s\n' "${1:-}" >>"$LOG"

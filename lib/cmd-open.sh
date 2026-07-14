@@ -18,14 +18,15 @@ cmd_open() {
 ${C_BOLD}$PROG${C_RESET} — open a project in an IDE, isolated in a Docker Sandbox
 
 ${C_BOLD}USAGE${C_RESET}
-  $PROG <path> [--cursor|--vscode] [--name <name>] [options]
+  $PROG <path> [--cursor|--vscode|--codex] [--name <name>] [options]
 
 ${C_BOLD}ARGUMENTS${C_RESET}
   <path>              Project directory to mount (the ONLY shared surface).
 
 ${C_BOLD}OPTIONS${C_RESET}
   --cursor            Open in Cursor (default unless a different default is set).
-  --vscode            Open in VS Code (via Dev Containers attach, never SSH).
+  --vscode            Open in VS Code (real sshd + published loopback port).
+  --codex             Register the sandbox as a Codex Desktop remote connection.
   --name <name>       Sandbox name (default: derived from the directory name).
   --agent <agent>     sbx agent/template the sandbox runs (e.g. shell, claude).
                       Per-target default via '${SBX_IDE_PROG:-sbx-ide} set-default --agent'.
@@ -55,6 +56,7 @@ EOF
       -h|--help) usage; return 0 ;;
       --cursor)  TARGET_FLAG="cursor"; shift ;;
       --vscode)  TARGET_FLAG="vscode"; shift ;;
+      --codex)   TARGET_FLAG="codex"; shift ;;
       --name)    NAME="${2:?--name needs a value}"; shift 2 ;;
       --agent)   AGENT_FLAG="${2:?--agent needs a value}"; shift 2 ;;
       --no-open|--no-cursor) NO_OPEN=1; shift ;;   # --no-cursor: back-compat

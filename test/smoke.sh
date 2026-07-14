@@ -41,6 +41,13 @@ export SBX_STUB_EXEC_LOG="$WORK/exec.log"
 export SBX_VSCODE_SSH_RETRIES=2
 export SBX_VSCODE_SSH_RETRY_DELAY=0
 
+# Codex target: capture the deep-link opener + clipboard through logging stubs,
+# so no real desktop app or system clipboard is touched.
+export SBX_STUB_URL_LOG="$WORK/url.log"
+export SBX_STUB_CLIP_FILE="$WORK/clip.txt"
+export SBX_URL_OPENER="$ROOT/test/stubs/url-open"
+export SBX_CLIPBOARD_CMD="$ROOT/test/stubs/clip"
+
 PASS=0; FAIL=0
 pass() { printf '  ok   %s\n' "$1"; PASS=$((PASS+1)); }
 fail() { printf '  FAIL %s\n' "$1"; FAIL=$((FAIL+1)); }
@@ -212,6 +219,45 @@ seed; mkdir -p "$WORK/proj"; reset_code
 if SBX_STUB_SSH_UNREACHABLE=1 sbx-ide open "$WORK/proj" --vscode >/dev/null 2>&1; then rc=0; else rc=1; fi
 check "hard-fails when the port is closed" "[ $rc -eq 1 ]"
 check "did not launch code"                "[ ! -s '$SBX_STUB_CODE_LOG' ]"
+
+echo "== sbx-ide open --codex: --print-uri is the connection deep link =="
+seed; mkdir -p "$WORK/proj"
+uri="$(sbx-ide open "$WORK/proj" --codex --print-uri 2>/dev/null)"
+check "codex --print-uri is the deep link" "[ \"$uri\" = 'codex://settings/connections/ssh/add?name=proj.sbx' ]"
+
+echo "== sbx-ide open --codex: registers connection over the *.sbx tunnel =="
+seed; reset_cursor; reset_code
+: > "$WORK/url.log"; : > "$WORK/clip.txt"; : > "$WORK/exec.log"
+sbx-ide open "$WORK/proj" --codex >/dev/null 2>&1
+check "creates a sandbox named after the dir"    "grep -q '^proj	' '$SBX_STUB_STATE'"
+check "writes a concrete Host proj.sbx alias"    "grep -q '# sbx-ide ssh BEGIN proj.sbx' '$HOME/.ssh/config'"
+check "the codex alias block carries no options" "! awk '/# sbx-ide ssh BEGIN proj.sbx/{f=1;next}/# sbx-ide ssh END proj.sbx/{f=0}f&&/^[[:space:]]+[A-Za-z]/' '$HOME/.ssh/config' | grep -q ."
+check "fires the codex connection deep link"      "grep -q 'name=proj.sbx' '$WORK/url.log'"
+check "copies the remote folder path to clipboard" "[ \"\$(cat '$WORK/clip.txt')\" = '$WORK/proj' ]"
+check "does NOT launch cursor or code"            "[ ! -s '$SBX_STUB_CURSOR_LOG' ] && [ ! -s '$SBX_STUB_CODE_LOG' ]"
+
+echo "== sbx-ide open --codex: SSH not set up prints the setup steps =="
+seed
+out="$(SBX_STUB_SSH_UNREACHABLE=1 sbx-ide open "$WORK/proj" --codex 2>&1 || true)"
+check "codex guides through ssh setup" "grep -q 'sbx ssh setup' <<< \"\$out\""
+
+echo "== sbx-ide open --codex: --no-open prints link + folder, opens nothing =="
+seed; : > "$WORK/url.log"
+out="$(sbx-ide open "$WORK/proj" --codex --no-open 2>&1 || true)"
+check "no-open does not fire the deep link" "[ ! -s '$WORK/url.log' ]"
+check "no-open prints the folder path"      "grep -q '$WORK/proj' <<< \"\$out\""
+
+echo "== sbx-ide: codex as default target + clean strips its alias =="
+reset_cfg; seed; mkdir -p "$WORK/proj"
+sbx-ide set-default codex >/dev/null 2>&1
+check "config records codex default" "grep -q 'default_target=codex' '$XDG_CONFIG_HOME/sbx-ide/config'"
+uri="$(sbx-ide open "$WORK/proj" --print-uri 2>/dev/null)"
+check "config default drives codex"  "grep -q 'name=proj.sbx' <<< \"$uri\""
+reset_cfg
+seed "$(printf 'proj\tshell\trunning\t')"
+printf '\n# sbx-ide ssh BEGIN proj.sbx\nHost proj.sbx\n# sbx-ide ssh END proj.sbx\n' >> "$HOME/.ssh/config"
+sbx-ide clean --orphans-only --yes >/dev/null 2>&1
+check "clean removes the codex alias block" "! grep -q '# sbx-ide ssh BEGIN proj.sbx' '$HOME/.ssh/config'"
 
 echo "== sbx-ide set-default: persistence + resolution order =="
 reset_cfg; seed; mkdir -p "$WORK/proj"; reset_code; reset_cursor

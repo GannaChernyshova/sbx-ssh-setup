@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stub clipboard tool for tests. Reads the value from stdin and stores it so
+# tests can assert the remote folder path was copied. Wired in via
+# SBX_CLIPBOARD_CMD; touches no real clipboard.
+set -euo pipefail
+OUT="${SBX_STUB_CLIP_FILE:-${TMPDIR:-/tmp}/sbx-stub-clip.txt}"
+cat > "$OUT"
