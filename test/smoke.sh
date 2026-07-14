@@ -259,6 +259,20 @@ out="$(sbx-ide set-default 2>&1)"
 check "report lists a per-target agent" "grep -q 'agent (vscode): gemini' <<< \"\$out\""
 reset_cfg
 
+echo "== sbx-ide open: agent login banner (create, non-shell agent only) =="
+reset_cfg; seed; mkdir -p "$WORK/proj"
+: > "$WORK/exec.log"
+sbx-ide open "$WORK/proj" --agent claude >/dev/null 2>&1
+check "writes a login banner for a real agent" "grep -q 'sbx-ide agent banner' '$WORK/exec.log'"
+# shell agent → no banner
+seed; : > "$WORK/exec.log"
+sbx-ide open "$WORK/proj" >/dev/null 2>&1
+check "no banner for the shell agent" "! grep -q 'sbx-ide agent banner' '$WORK/exec.log'"
+# reuse (not create) → no re-write of the banner
+seed "$(printf 'proj\tshell\trunning\t%s/proj' "$WORK")"; : > "$WORK/exec.log"
+sbx-ide open "$WORK/proj" --agent claude >/dev/null 2>&1
+check "no banner write on reuse" "! grep -q 'sbx-ide agent banner' '$WORK/exec.log'"
+
 echo "== deprecated shims forward + warn on stderr =="
 seed; mkdir -p "$WORK/proj"; reset_cursor
 err="$(sbx-open "$WORK/proj" 2>&1 >/dev/null)"

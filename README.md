@@ -73,6 +73,8 @@ sbx-ide open ~/src/acme-api --agent gemini     # or override per run
 
 Agent resolution order: **`--agent` flag → `$SBX_AGENT_CURSOR`/`$SBX_AGENT_VSCODE` → config (`agent_cursor`/`agent_vscode`) → `$SBX_DEFAULT_AGENT` (default `shell`)**. `set-default --agent <name>` with no `--cursor`/`--vscode` applies to both. Known agents: `claude codex copilot cursor gemini shell` (confirm with `sbx run --help`).
 
+Terminals in the sandbox stay a **plain shell** — we don't auto-launch the agent (so exiting it always lands you back in the shell). When the sandbox runs a non-`shell` agent, a one-line **login banner** tells you the command to start it (`claude`, `gemini`, …), so it's discoverable without memorizing anything.
+
 ## Support matrix
 
 | IDE | Status | Mechanism |

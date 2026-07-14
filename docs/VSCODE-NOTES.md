@@ -91,7 +91,10 @@ channel is sub-millisecond — the exec-per-channel cost simply isn't in the pat
   `sbx-ide set-default --agent claude --vscode` (or `--agent <name>` per run) —
   then the sandbox runs that agent and it's available in the VS Code terminal.
   Alternatively install an agent extension (Copilot, Continue, …) into the
-  remote server. The agent applies on **create**; recreate to change it.
+  remote server. The agent applies on **create**; recreate to change it. The
+  VS Code terminal stays a plain shell (we don't auto-launch the agent, so
+  exiting it lands you back in the shell); a login banner names the command to
+  start it (e.g. `claude`).
 - **No fallback.** If the key is missing, the port can't be published, or our
   sshd's port never opens, `open --vscode` fails with an explanation — it never
   silently drops to sandboxd's SSH.

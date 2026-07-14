@@ -206,6 +206,19 @@ EOF
     fi
   fi
 
+  # --- agent login banner (create-only; terminals stay a plain shell) ------
+  # If the sandbox runs a real agent (not `shell`), drop a one-line hint into its
+  # login banner so an interactive terminal shows how to start it (`claude`,
+  # `gemini`, …). We never auto-launch the agent — exiting it should land you in
+  # the shell, which "open a terminal, run <agent>" already gives you.
+  if [[ "$DRY_RUN" == 0 && "$created" == 1 && "$AGENT" != "shell" ]]; then
+    if sbx_write_agent_banner "$NAME" "$AGENT"; then
+      info "Terminals open in a shell; run ${C_BOLD}$AGENT${C_RESET} to start the agent (also shown as a login banner)."
+    else
+      warn "Could not write the agent login banner (non-fatal)."
+    fi
+  fi
+
   # --- connect + launch: fully owned by the target ------------------------
   # Cursor: sandboxd SSH + folder-URI. VS Code: inject key, publish loopback
   # port, write ~/.ssh/config, Remote-SSH to our own sshd. Both honor

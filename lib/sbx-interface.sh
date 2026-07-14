@@ -307,6 +307,33 @@ sbx_has_remote_ssh_kit() {
     sh -c 'test -f /etc/ssh/sshd_config.d/10-sbx-ide.conf' </dev/null >/dev/null 2>&1
 }
 
+# sbx_write_agent_banner <name> <agent> : drop a login banner into the sandbox
+# user's ~/.bashrc naming the agent's launch command, so an interactive terminal
+# (VS Code or ssh) shows "run <agent> to start it" — while the terminal itself
+# stays a plain shell. Idempotent (rewrites its own marked block). Assumes the
+# agent's CLI == its name and that the login shell is bash. VERIFY-ON-HOST.
+sbx_write_agent_banner() {
+  local name="$1" agent="$2" tpl banner
+  # Single-quoted template so nothing expands here; `$-` stays literal (it is
+  # evaluated when the sandbox shell starts). Placeholders filled below.
+  tpl='# >>> sbx-ide agent banner >>>
+case $- in *i*)
+  echo ""
+  echo "● sbx-ide sandbox — isolated; only your mounted folder is shared with your machine."
+  echo "  Agent '\''__AGENT__'\'' is ready in here. Start it by running:  __CMD__"
+  echo ""
+;; esac
+# <<< sbx-ide agent banner <<<'
+  banner="${tpl//__AGENT__/$agent}"
+  banner="${banner//__CMD__/$agent}"
+  # shellcheck disable=SC2016  # $HOME / $SBXIDE_BANNER expand inside the sandbox
+  "$SBX_BIN" "$SBX_CMD_EXEC" --env SBXIDE_BANNER="$banner" "$name" -- sh -c '
+    RC="$HOME/.bashrc"; touch "$RC"
+    sed -i "/# >>> sbx-ide agent banner >>>/,/# <<< sbx-ide agent banner <<</d" "$RC" 2>/dev/null || true
+    printf "%s\n" "$SBXIDE_BANNER" >> "$RC"
+  ' </dev/null >/dev/null 2>&1 || return 1
+}
+
 # ---------------------------------------------------------------------------
 # In-container workspace path resolution
 # ---------------------------------------------------------------------------
