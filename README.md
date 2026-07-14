@@ -90,7 +90,7 @@ Removes the `sbx-ide` binary, the deprecated shims, the installed libraries, and
 
 ## Credits
 
-The VS Code support (real `sshd` in the sandbox + published loopback port + Remote-SSH) is adapted from the internal proof-of-concept [`DockerSolutionsEngineering/ai.gov.sbx-vscode-ssh`](https://github.com/DockerSolutionsEngineering/ai.gov.sbx-vscode-ssh) by @k33g (the `01-remote-ssh` and `06-better-remote-ssh` demos). See [`docs/VSCODE-NOTES.md`](docs/VSCODE-NOTES.md) for the full attribution.
+The VS Code support (real `sshd` in the sandbox + published loopback port + Remote-SSH) is adapted from the internal proof-of-concept [`DockerSolutionsEngineering/ai.gov.sbx-vscode-ssh`](https://github.com/DockerSolutionsEngineering/ai.gov.sbx-vscode-ssh) by [@k33g](https://github.com/k33g) (the `01-remote-ssh` and `06-better-remote-ssh` demos). See [`docs/VSCODE-NOTES.md`](docs/VSCODE-NOTES.md) for the full attribution.
 
 ## Docs
 
