@@ -110,25 +110,86 @@ else
   echo "  The sandbox may still be starting — wait a few seconds and retry: ssh $HOST"
 fi
 
-# ── 3. Print copy-paste-ready Codex values (and copy hostname to clipboard) ──
+# ── Register a concrete SSH alias so Codex auto-discovers this sandbox ────────
+# Codex enumerates *concrete* Host aliases in ~/.ssh/config and ignores the
+# pattern-only 'Host *.sbx' that sbx manages. Adding an (empty) concrete alias
+# named after this sandbox makes the connection appear in Codex automatically;
+# all connection settings are still inherited from 'Host *.sbx' via `ssh -G`.
+SSH_CONFIG="$HOME/.ssh/config"
+BEGIN_MARK="# >>> sbx-codex ${HOST} >>>"
+END_MARK="# <<< sbx-codex ${HOST} <<<"
+
+mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" 2>/dev/null || true
+touch "$SSH_CONFIG" && chmod 600 "$SSH_CONFIG" 2>/dev/null || true
+
+# Drop any previous block for this host so re-runs stay idempotent.
+if grep -qxF "$BEGIN_MARK" "$SSH_CONFIG" 2>/dev/null; then
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+    $0==b {skip=1; next} $0==e {skip=0; next} !skip {print}
+  ' "$SSH_CONFIG" >"$SSH_CONFIG.tmp" && mv "$SSH_CONFIG.tmp" "$SSH_CONFIG"
+  chmod 600 "$SSH_CONFIG" 2>/dev/null || true
+fi
+# Make sure the file ends with a newline before appending our block.
+if [ -s "$SSH_CONFIG" ] && [ -n "$(tail -c1 "$SSH_CONFIG" 2>/dev/null)" ]; then
+  printf '\n' >>"$SSH_CONFIG"
+fi
+{
+  echo "$BEGIN_MARK"
+  echo "# Concrete alias so Codex auto-discovers this sandbox (it ignores 'Host *.sbx')."
+  echo "# Settings are inherited from the sbx-managed 'Host *.sbx' block via 'ssh -G'."
+  echo "Host ${HOST}"
+  echo "$END_MARK"
+} >>"$SSH_CONFIG"
+echo ""
+echo "==> Registered SSH alias '$HOST' in ~/.ssh/config for Codex auto-discovery."
+
+# ── Pre-provision the project directory (the sandbox's start directory) ──────
+# On macOS/Linux the host working tree is mounted at the same path inside the
+# sandbox, so the folder Codex should open is this directory. Verify it exists
+# in the sandbox; otherwise fall back to the sandbox's default login directory.
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
+REMOTE_DIR="$PWD"
+if ! ssh "${SSH_OPTS[@]}" "$HOST" "test -d \"$REMOTE_DIR\"" 2>/dev/null; then
+  ALT_DIR="$(ssh "${SSH_OPTS[@]}" "$HOST" 'pwd' 2>/dev/null | tr -d '\r')"
+  [ -n "$ALT_DIR" ] && REMOTE_DIR="$ALT_DIR"
+fi
+ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p \"$REMOTE_DIR\"" 2>/dev/null || true
+echo "==> Project directory ready in sandbox: $REMOTE_DIR"
+
+# ── Register the connection in the Codex app via its supported deep link ─────
+# codex://settings/connections/ssh/add?name=<alias> — the name must match the
+# Host alias above. This makes the Codex app add/enable the connection without
+# a manual Settings → Connections → Refresh.
+DEEPLINK="codex://settings/connections/ssh/add?name=${HOST}"
+if command -v open >/dev/null 2>&1; then
+  open "$DEEPLINK" >/dev/null 2>&1 || true
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$DEEPLINK" >/dev/null 2>&1 || true
+fi
+
+# ── Copy the remote project path to the clipboard (pasted into Codex) ────────
 CLIP_NOTE=""
 if command -v pbcopy >/dev/null 2>&1; then
-  printf '%s' "$HOST" | pbcopy && CLIP_NOTE="  (copied to clipboard)"
+  printf '%s' "$REMOTE_DIR" | pbcopy && CLIP_NOTE="  (copied to clipboard)"
 elif command -v wl-copy >/dev/null 2>&1; then
-  printf '%s' "$HOST" | wl-copy && CLIP_NOTE="  (copied to clipboard)"
+  printf '%s' "$REMOTE_DIR" | wl-copy && CLIP_NOTE="  (copied to clipboard)"
 elif command -v xclip >/dev/null 2>&1; then
-  printf '%s' "$HOST" | xclip -selection clipboard >/dev/null 2>&1 && CLIP_NOTE="  (copied to clipboard)"
+  printf '%s' "$REMOTE_DIR" | xclip -selection clipboard >/dev/null 2>&1 && CLIP_NOTE="  (copied to clipboard)"
 fi
 
 cat <<EOF
 
-✓ Sandbox '$SBX_NAME' is ready.
+✓ Sandbox '$SBX_NAME' is ready and registered for Codex.
 
-Add this connection in Codex (Settings → Connections → Add → Add manually):
-   Display name:  $SBX_NAME
-   Hostname:      $HOST$CLIP_NOTE
+In Codex, just create the project:
+   1. New project → Remote.
+   2. Pick the connection "$HOST". It should already be listed (registered via
+      the Codex deep link). If not, click this link or Refresh Settings →
+      Connections:  $DEEPLINK
+   3. Set the project folder to:
+        $REMOTE_DIR$CLIP_NOTE
+   4. Click Add project, then start coding.
 
-Or connect from a terminal:  ssh $HOST
-
+Terminal access:  ssh $HOST
 Full Codex UI walkthrough: docs/codex.md
 EOF

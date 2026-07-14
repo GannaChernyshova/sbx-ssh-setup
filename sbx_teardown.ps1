@@ -17,3 +17,25 @@ if ([string]::IsNullOrEmpty($Name)) {
 Write-Host "==> Removing sandbox '$Name' (stops it and deletes its resources)..."
 sbx rm $Name
 Write-Host "OK Removed '$Name'."
+
+# Remove the concrete SSH alias the setup script added for Codex discovery.
+# Match the setup script: Windows OpenSSH reads %USERPROFILE%\.ssh\config.
+$sshHome   = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+$sshConfig = Join-Path (Join-Path $sshHome ".ssh") "config"
+$sbxHost   = "$Name.sbx"
+$beginMark = "# >>> sbx-codex $sbxHost >>>"
+$endMark   = "# <<< sbx-codex $sbxHost <<<"
+if (Test-Path $sshConfig) {
+    $lines = @(Get-Content -LiteralPath $sshConfig)
+    if ($lines -contains $beginMark) {
+        $filtered = New-Object System.Collections.Generic.List[string]
+        $skip = $false
+        foreach ($line in $lines) {
+            if ($line -eq $beginMark) { $skip = $true; continue }
+            if ($line -eq $endMark)   { $skip = $false; continue }
+            if (-not $skip) { $filtered.Add($line) }
+        }
+        Set-Content -LiteralPath $sshConfig -Value $filtered -Encoding ascii
+        Write-Host "OK Removed Codex SSH alias '$sbxHost' from ~/.ssh/config."
+    }
+}

@@ -17,8 +17,22 @@ named after the current directory. Pick the script for your platform.
    restarts the `sbx` daemon, and runs `sbx ssh setup`.
 4. Creates the sandbox from the chosen AI agent template (required first argument), skipping
    creation if a sandbox with that name already exists.
-5. Verifies SSH connectivity, then prints copy-paste-ready Codex values (Display name + Hostname)
-   and copies the hostname to the clipboard.
+5. Verifies SSH connectivity.
+6. Registers a concrete `Host <name>.sbx` alias in `~/.ssh/config` so Codex auto-discovers the
+   connection (Codex ignores the pattern-only `Host *.sbx` that `sbx` manages). Settings are
+   inherited from the `sbx`-managed block via `ssh -G`, so nothing is duplicated.
+7. Pre-provisions the project directory inside the sandbox (the sandbox's start directory) and
+   copies its remote path to the clipboard — paste it as the folder when creating the Codex
+   Remote Project.
+
+The teardown scripts remove that `~/.ssh/config` alias when they remove the sandbox.
+
+> **Known limitation:** in the Codex desktop app the sandbox, SSH connection and workdir are all
+> automated, but the **project's Folder path must be entered manually** when creating the Remote
+> Project (paste it — the script copies it to your clipboard). Codex has no supported way to register
+> a remote project or its folder from automation ([openai/codex#21554](https://github.com/openai/codex/issues/21554)),
+> and we deliberately avoid the fragile `~/.codex/.codex-global-state.json` hack. See
+> [docs/codex.md](docs/codex.md#known-limitation--blocker--the-project-folder-is-not-automatable).
 
 ## Requirements
 

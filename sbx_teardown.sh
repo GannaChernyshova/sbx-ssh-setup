@@ -18,3 +18,16 @@ fi
 echo "==> Removing sandbox '$NAME' (stops it and deletes its resources)..."
 sbx rm "$NAME"
 echo "✓ Removed '$NAME'."
+
+# Remove the concrete SSH alias the setup script added for Codex discovery.
+SSH_CONFIG="$HOME/.ssh/config"
+HOST="${NAME}.sbx"
+BEGIN_MARK="# >>> sbx-codex ${HOST} >>>"
+END_MARK="# <<< sbx-codex ${HOST} <<<"
+if [ -f "$SSH_CONFIG" ] && grep -qxF "$BEGIN_MARK" "$SSH_CONFIG" 2>/dev/null; then
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+    $0==b {skip=1; next} $0==e {skip=0; next} !skip {print}
+  ' "$SSH_CONFIG" >"$SSH_CONFIG.tmp" && mv "$SSH_CONFIG.tmp" "$SSH_CONFIG"
+  chmod 600 "$SSH_CONFIG" 2>/dev/null || true
+  echo "✓ Removed Codex SSH alias '$HOST' from ~/.ssh/config."
+fi
