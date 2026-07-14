@@ -231,7 +231,8 @@ EOF
     ;;
 
   setup)   echo "host configuration prepared"; exit 0 ;;
-  ssh)     echo "ssh config written"; exit 0 ;;
+  ssh)     echo "ssh config written (${*:-})"; exit 0 ;;   # models `ssh setup`
+  settings) echo "settings ${*}: ok" ;;                    # models `settings set k v`
   diagnose) echo "no issues detected"; exit 0 ;;
   daemon)  echo "daemon $*: ok" ;;
 
@@ -239,7 +240,7 @@ EOF
     cat <<EOF
 sbx — Docker Sandboxes (stub)
 Usage: sbx <command> [args]
-Commands: version ls run create exec ports stop rm setup ssh diagnose daemon
+Commands: version ls run create exec ports stop rm setup ssh settings diagnose daemon
 EOF
     ;;
   *) echo "sbx: unknown command '$cmd'" >&2; exit 1 ;;

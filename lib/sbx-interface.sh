@@ -121,6 +121,18 @@ ${SBX_BIN} ssh setup
 EOF
 }
 
+# sbx_ssh_setup_run : EXECUTE the steps above, in order, stopping at the first
+# failure (returns its status). Restarts the daemon — callers MUST confirm with
+# the user first (see `sbx-ide doctor --setup-ssh`). Keep in sync with
+# sbx_ssh_setup_steps (which is what we print).
+sbx_ssh_setup_run() {
+  "$SBX_BIN" settings set platform.allowExperimentalFeatures true || return $?
+  "$SBX_BIN" settings set feature.ssh true                        || return $?
+  "$SBX_BIN" daemon stop                                          || return $?
+  "$SBX_BIN" daemon start -d                                      || return $?
+  "$SBX_BIN" ssh setup                                            || return $?
+}
+
 # ---------------------------------------------------------------------------
 # Raw invocation
 # ---------------------------------------------------------------------------

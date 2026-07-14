@@ -322,6 +322,18 @@ check "lists optional dev tools separately" "grep -qi 'Optional dev tools' <<< \
 seed "$(printf 'cursor-sbx\tshell\trunning\t/Users/x/demos')"
 if sbx-ide doctor --verify >/dev/null 2>&1; then rc=0; else rc=1; fi
 check "--verify passes cleanly against the stub" "[ $rc -eq 0 ]"
+
+echo "== sbx-ide doctor --setup-ssh =="
+# No SSH config yet in this fresh HOME → --setup-ssh --yes runs the steps.
+sshhome="$WORK/ssh-setup-home"; mkdir -p "$sshhome/.ssh"
+out="$(HOME="$sshhome" sbx-ide doctor --setup-ssh --yes 2>&1 || true)"
+check "runs setup and reports success" "grep -qi 'SSH-to-sandbox enabled' <<< \"\$out\""
+# Without --yes and no TTY → aborts, changes nothing.
+out="$(HOME="$sshhome" sbx-ide doctor --setup-ssh </dev/null 2>&1 || true)"
+check "aborts without confirmation"    "grep -qi 'Aborted' <<< \"\$out\""
+# When config already exists → no-op success.
+out="$(sbx-ide doctor --setup-ssh --yes 2>&1 || true)"   # $HOME here already has Host *.sbx
+check "no-op when already configured"  "grep -qi 'already present' <<< \"\$out\""
 check "--target vscode runs a vscode-only check"  "out=\"\$(sbx-ide doctor --target vscode 2>&1 || true)\"; grep -qi 'VS Code' <<< \"\$out\""
 
 echo "== --help / --version =="

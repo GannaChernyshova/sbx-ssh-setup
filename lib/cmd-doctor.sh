@@ -15,23 +15,28 @@ cmd_doctor() {
 ${C_BOLD}$PROG${C_RESET} — health checks and assumption verification for sbx + IDEs
 
 ${C_BOLD}USAGE${C_RESET}
-  $PROG [--verify] [--fix] [--target cursor|vscode]
+  $PROG [--verify] [--fix] [--target cursor|vscode] [--setup-ssh [--yes]]
 
 ${C_BOLD}OPTIONS${C_RESET}
   --verify           Check every VERIFY-ON-HOST assumption against the real CLI.
   --fix              Offer to remove any orphan sandboxes found (prompts).
   --target <t>       Check only IDE target <t> (cursor|vscode), strictly.
+  --setup-ssh        Enable SSH-to-sandbox for the Cursor target (runs the
+                     experimental-feature + daemon-restart steps; prompts first).
+  --yes              With --setup-ssh, skip the confirmation prompt.
   -h, --help         Show this help.
 EOF
   }
 
-  local MODE="health" DO_FIX=0 ONLY_TARGET=""
+  local MODE="health" DO_FIX=0 ONLY_TARGET="" ASSUME_YES=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) usage; return 0 ;;
       --verify) MODE="verify"; shift ;;
       --fix) DO_FIX=1; shift ;;
       --target) ONLY_TARGET="${2:?--target needs a value}"; shift 2 ;;
+      --setup-ssh) MODE="setup-ssh"; shift ;;
+      --yes|-y) ASSUME_YES=1; shift ;;
       *) die "unknown option: $1  (try --help)" ;;
     esac
   done
@@ -305,8 +310,39 @@ EOF
     fi
   }
 
+  # ==========================================================================
+  # SETUP-SSH MODE — enable SSH-to-sandbox for the Cursor target (opt-in).
+  # ==========================================================================
+  run_setup_ssh() {
+    heading "Enable SSH-to-sandbox (needed by the Cursor target only)"
+    sbx_present || die "sbx not found on PATH — install it first."
+    if ssh_config_has_suffix; then
+      success "SSH config for *${SBX_SSH_SUFFIX} already present — nothing to do."
+      return 0
+    fi
+    info "This will run, on this host:"
+    while IFS= read -r step; do cmd "$step"; done < <(sbx_ssh_setup_steps)
+    warn "The daemon restart interrupts any OTHER running sandboxes on this machine."
+    hint "VS Code doesn't need this — it runs its own sshd on a published port."
+    if [[ "$ASSUME_YES" != 1 ]]; then
+      if ! confirm "Run these now?"; then
+        info "Aborted. Nothing changed."
+        hint "Non-interactive? re-run with --yes. Or run the steps above by hand."
+        return 1
+      fi
+    fi
+    info "Enabling SSH-to-sandbox (the sbx daemon will restart)…"
+    if sbx_ssh_setup_run; then
+      success "SSH-to-sandbox enabled. Verify with: ${SBX_IDE_PROG:-sbx-ide} doctor"
+    else
+      err "Setup failed. Run the steps above by hand to see the error, then re-check with: ${SBX_IDE_PROG:-sbx-ide} doctor"
+      return 1
+    fi
+  }
+
   case "$MODE" in
     health) run_health ;;
     verify) run_verify ;;
+    setup-ssh) run_setup_ssh ;;
   esac
 }
