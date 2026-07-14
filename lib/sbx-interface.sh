@@ -12,7 +12,38 @@
 # --- Binaries -------------------------------------------------------------
 : "${SBX_BIN:=sbx}"        # the sbx CLI
 : "${CURSOR_BIN:=cursor}"  # the Cursor CLI (`cursor --folder-uri ...`)
+: "${CODE_BIN:=code}"      # the VS Code CLI (`code --remote ...`)
 : "${SSH_BIN:=ssh}"        # ssh client used for reachability + path probes
+
+# --- VS Code — real sshd + published loopback port (NOT sandboxd SSH) ------
+# sbx sandboxes are microVMs, so Dev Containers "attach to running container"
+# is impossible (nothing to attach to). And VS Code Remote-SSH over sandboxd's
+# EMULATED SSH endpoint (*.sbx) retry-loops, because sandboxd services each
+# forwarded channel with a fresh ~0.5s docker exec — VS Code re-opens its
+# primary port-forward on every reconnect and treats that latency as a dead
+# link. The fix (HOST-VERIFIED, see docs/VSCODE-NOTES.md): run a REAL OpenSSH
+# server inside the sandbox (via the bundled remote-ssh kit), publish its port
+# 22 to a host loopback port, and point VS Code Remote-SSH at 127.0.0.1:<port>
+# — a real sshd where opening a channel is sub-millisecond.
+#
+# VERIFY-ON-HOST: the Remote-SSH extension id as `code --list-extensions` prints it.
+: "${SBX_VSCODE_EXT:=ms-vscode-remote.remote-ssh}"
+: "${SBX_VSCODE_SSH_USER:=agent}"                       # the in-sandbox login user
+: "${SBX_VSCODE_SSH_PORT_BASE:=2222}"                   # first host loopback port to try
+# A DEDICATED, passwordless key just for sbx-ide VS Code sandboxes — NOT your
+# GitHub / general key. Auto-generated on first use (ed25519, no passphrase), so
+# BatchMode auth always works with no agent, no prompts. Pinned in ~/.ssh/config
+# via IdentityFile + IdentitiesOnly, so only this key is offered to the sandbox.
+: "${SBX_VSCODE_SSH_KEY:=$HOME/.ssh/sbx-vscode}"        # private key path (pub = <key>.pub)
+: "${SBX_VSCODE_AUTOGEN_KEY:=1}"                        # 1 = create it if missing
+: "${SBX_VSCODE_HOST_PREFIX:=sbx-}"                     # ssh_config Host alias prefix
+: "${SBX_VSCODE_PRESEED:=1}"                            # 1 = pre-seed server+extensions
+: "${SBX_VSCODE_SSH_RETRIES:=15}"                       # attempts to reach our sshd
+: "${SBX_VSCODE_SSH_RETRY_DELAY:=1}"                    # seconds between attempts
+: "${SBX_CMD_PORTS:=ports}"                             # `sbx ports <name> --publish …`
+# ssh_config block markers (per alias) so uninstall/clean can find & remove them.
+: "${SBX_SSH_BLOCK_BEGIN:=# sbx-ide ssh BEGIN}"
+: "${SBX_SSH_BLOCK_END:=# sbx-ide ssh END}"
 
 # --- Versioning -----------------------------------------------------------
 : "${SBX_MIN_VERSION:=0.35}"   # SSH-to-sandbox support landed in 0.35.
@@ -51,6 +82,14 @@
 : "${SBX_CMD_STOP:=stop}"
 : "${SBX_CMD_RM:=rm}"
 : "${SBX_CMD_DIAGNOSE:=diagnose}"
+
+# `sbx rm` REQUIRES confirmation and refuses a sandbox that is "in use" (e.g. an
+# open SSH channel) unless --force is given. Every orphan we clean up is running
+# and often in use, and we always run non-interactively (piped stdin), so we must
+# pass --force. HOST-VERIFIED against `sbx rm --help`:
+#   "-f, --force  Skip confirmation prompts and delete even if in use".
+# Set SBX_RM_FORCE_FLAG= (empty) to opt out of forcing.
+: "${SBX_RM_FORCE_FLAG:=--force}"
 
 # --- Detached create / wake ----------------------------------------------
 # How to create-or-wake a sandbox WITHOUT attaching an interactive shell.
@@ -159,6 +198,15 @@ sbx_status()    { sbx_get "$1" | cut -f3; }
 sbx_workspace() { sbx_get "$1" | cut -f4; }
 sbx_exists()    { sbx_get "$1" >/dev/null 2>&1; }
 
+# sbx_rm <name> : remove a sandbox non-interactively. Forces (so it never blocks
+# on a confirmation prompt and can delete a running/in-use orphan) and takes its
+# stdin from /dev/null so it can NEVER consume a caller's loop input (e.g. a
+# `while read … done <<< "$list"` here-string). Prints sbx's own stdout+stderr
+# so callers can surface the real reason on failure; returns sbx's exit status.
+sbx_rm() {
+  "$SBX_BIN" "$SBX_CMD_RM" ${SBX_RM_FORCE_FLAG:+$SBX_RM_FORCE_FLAG} "$1" </dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 # Lifecycle: create-or-wake, DETACHED (never attaches an interactive shell)
 #
@@ -178,34 +226,80 @@ _sbx_run_detached() {
 # wake it if stopped — always detached, returning control immediately. A
 # running sandbox is left as-is. For the wake case, agent/path are read from the
 # sandbox's stored spec, so callers may pass "" for both.
+# sbx_ensure_running <agent> <name> <path> [extra-create-args...] : the extra
+# args (e.g. `--kit <dir>` for the VS Code target) are applied on CREATE only —
+# a wake reuses the sandbox's stored spec, so the kit is already attached.
+# (`${extra[@]+…}` guard keeps this safe under `set -u` on bash 3.2 / macOS.)
 sbx_ensure_running() {
-  local agent="$1" name="$2" path="$3"
+  local agent="$1" name="$2" path="$3"; shift 3 2>/dev/null || true
+  local -a extra=("$@")
   sbx_present || return 1
 
   if sbx_exists "$name"; then
     [[ "$(sbx_status "$name")" == "running" ]] && return 0
-    _sbx_run_detached --name "$name" >/dev/null      # wake (agent from spec)
+    _sbx_run_detached --name "$name" >/dev/null      # wake (agent/kit from spec)
     return
   fi
 
   if [[ "$SBX_CREATE_MODE" == "create" ]]; then
-    "$SBX_BIN" "$SBX_CMD_CREATE" "$agent" --name "$name" "$path" </dev/null >/dev/null
+    "$SBX_BIN" "$SBX_CMD_CREATE" "$agent" ${extra[@]+"${extra[@]}"} --name "$name" "$path" </dev/null >/dev/null
     _sbx_run_detached --name "$name" >/dev/null       # ensure it is started
   else
-    _sbx_run_detached "$agent" --name "$name" "$path" >/dev/null
+    _sbx_run_detached "$agent" ${extra[@]+"${extra[@]}"} --name "$name" "$path" >/dev/null
   fi
 }
 
-# sbx_ensure_running_cmd <agent> <name> <path> : the command we WOULD run, for
-# --dry-run display (create form; the wake form is just `run --detached --name`).
+# sbx_ensure_running_cmd <agent> <name> <path> [extra...] : the command we WOULD
+# run, for --dry-run display (create form).
 sbx_ensure_running_cmd() {
-  local agent="$1" name="$2" path="$3"
+  local agent="$1" name="$2" path="$3"; shift 3 2>/dev/null || true
+  local extra_str="$*"
   if [[ "$SBX_CREATE_MODE" == "create" ]]; then
-    printf '%s %s %s --name %s %s' "$SBX_BIN" "$SBX_CMD_CREATE" "$agent" "$name" "$path"
+    printf '%s %s %s %s--name %s %s' "$SBX_BIN" "$SBX_CMD_CREATE" "$agent" "${extra_str:+$extra_str }" "$name" "$path"
   else
-    printf '%s %s %s %s --name %s %s' \
-      "$SBX_BIN" "$SBX_CMD_RUN" "$SBX_RUN_DETACH_FLAG" "$agent" "$name" "$path"
+    printf '%s %s %s %s %s--name %s %s' \
+      "$SBX_BIN" "$SBX_CMD_RUN" "$SBX_RUN_DETACH_FLAG" "$agent" "${extra_str:+$extra_str }" "$name" "$path"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# VS Code helpers: publish the sandbox's sshd port + inject the auth key.
+# ---------------------------------------------------------------------------
+
+# sbx_published_ssh_port <name> : the host port already published to the
+# sandbox's :22, or empty. VERIFY-ON-HOST: `sbx ports <name>` output format.
+sbx_published_ssh_port() {
+  sbx_present || return 0
+  "$SBX_BIN" "$SBX_CMD_PORTS" "$1" 2>/dev/null \
+    | sed -nE 's/.*[^0-9]([0-9]+)->22(\/tcp)?([[:space:]]|$).*/\1/p' | head -n1
+}
+
+# sbx_publish_ssh_port <name> <host_port> : publish 127.0.0.1:<host_port> -> :22.
+# Binds loopback ONLY (never 0.0.0.0) so the sandbox's sshd is unreachable off
+# this machine. VERIFY-ON-HOST: `sbx ports --publish` accepts the HOST_IP form.
+sbx_publish_ssh_port() {
+  "$SBX_BIN" "$SBX_CMD_PORTS" "$1" --publish "127.0.0.1:${2}:22/tcp" </dev/null 2>&1
+}
+
+# sbx_inject_pubkey <name> <pubkey_file> : install the key as the sandbox user's
+# sole authorized_keys. sshd reads it per-connection, so no restart is needed.
+sbx_inject_pubkey() {
+  local name="$1" keyfile="$2" home="/home/${SBX_VSCODE_SSH_USER}"
+  # Create ~/.ssh ourselves (don't assume the kit's dir-create step ran) so the
+  # write can't fail with "Directory nonexistent". The single-quoted sh -c body
+  # runs INSIDE the sandbox; $KEY is expanded there (from --env), not here.
+  # shellcheck disable=SC2016
+  "$SBX_BIN" "$SBX_CMD_EXEC" --env KEY="$(cat "$keyfile")" "$name" -- \
+    sh -c 'mkdir -p '"$home"'/.ssh && chmod 700 '"$home"'/.ssh && printf "%s\n" "$KEY" > '"$home"'/.ssh/authorized_keys && chmod 600 '"$home"'/.ssh/authorized_keys' </dev/null 2>&1
+}
+
+# sbx_has_remote_ssh_kit <name> : true if the sandbox was created with our
+# remote-ssh kit (the sshd drop-in it writes is present). Lets --vscode detect a
+# sandbox created WITHOUT the kit (e.g. one that predates --vscode) instead of
+# failing cryptically. VERIFY-ON-HOST: the marker path the kit writes.
+sbx_has_remote_ssh_kit() {
+  "$SBX_BIN" "$SBX_CMD_EXEC" "$1" -- \
+    sh -c 'test -f /etc/ssh/sshd_config.d/10-sbx-ide.conf' </dev/null >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------------------

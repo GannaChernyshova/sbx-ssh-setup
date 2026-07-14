@@ -98,6 +98,7 @@ EOF
       case "$1" in
         -d|--detached) detached=1; shift ;;
         --name) name="$2"; shift 2 ;;
+        --kit) shift 2 ;;             # takes a value (the kit dir); ignored here
         --*) shift ;;                 # ignore other long flags
         -*) shift ;;
         *) if [[ -z "$agent" ]]; then agent="$1"; else ws="$1"; fi; shift ;;
@@ -130,6 +131,7 @@ EOF
       case "$1" in
         --help|-h) echo "Usage: sbx create <agent> --name <name> [PATH]"; exit 0 ;;
         --name) name="$2"; shift 2 ;;
+        --kit) shift 2 ;;
         --*) shift ;;
         -*) shift ;;
         *) if [[ -z "$agent" ]]; then agent="$1"; else ws="$1"; fi; shift ;;
@@ -142,24 +144,90 @@ EOF
     ;;
 
   exec)
-    # `sbx exec <name> -- <cmd...>`. We only model `pwd`, returning the
-    # (mirrored) workspace path so container-path probing works.
+    # `sbx exec [--env K=V]... <name> -- <cmd...>`. Flags precede the name.
+    # We model `pwd` (returns the mirrored workspace, for container-path probing)
+    # and otherwise succeed as a no-op — enough for key injection + pre-seeding,
+    # which only need a zero exit. SBX_STUB_EXEC_LOG records the invocation.
+    while [[ "${1:-}" == --* || "${1:-}" == -* ]]; do
+      case "$1" in
+        --env) shift 2 ;;
+        *) shift ;;
+      esac
+    done
     n="${1:?exec needs a name}"; shift
     exists "$n" || not_found "$n"
     [[ "${1:-}" == "--" ]] && shift
+    [[ -n "${SBX_STUB_EXEC_LOG:-}" ]] && printf 'exec %s %s\n' "$n" "$*" >>"$SBX_STUB_EXEC_LOG"
     case "${1:-}" in
       pwd) get_field "$n" 4 || true ;;
-      *)   echo "exec: unsupported stub command '${1:-}'" >&2; exit 1 ;;
+      *)
+        # The remote-ssh kit marker probe: `sh -c 'test -f …/10-sbx-ide.conf'`.
+        # SBX_STUB_NO_KIT=1 models a sandbox created WITHOUT the kit (marker absent).
+        if printf '%s' "$*" | grep -q '10-sbx-ide.conf'; then
+          [[ "${SBX_STUB_NO_KIT:-0}" == 1 ]] && exit 1 || exit 0
+        fi
+        : ;;   # everything else: no-op success (key inject / pre-seed)
     esac
+    ;;
+
+  ports)
+    # `sbx ports <name>`                       -> list published ports
+    # `sbx ports <name> --publish [IP:]HP:CP/proto`  -> record a mapping
+    # Published ports live in $SBX_STUB_STATE.ports (TSV: name<TAB>hostport<TAB>containerport).
+    PORTS_STATE="${STATE}.ports"
+    pn="${1:?ports needs a name}"; shift
+    exists "$pn" || not_found "$pn"
+    if [[ "${1:-}" == "--publish" ]]; then
+      spec="${2:?--publish needs a spec}"
+      cp="${spec##*:}"; cp="${cp%%/*}"          # container port (after last ':', before '/')
+      rest="${spec%:*}"; hp="${rest##*:}"       # host port (token before container port)
+      printf '%s\t%s\t%s\n' "$pn" "$hp" "$cp" >>"$PORTS_STATE"
+      echo "published 127.0.0.1:${hp} -> ${pn}:${cp}"
+    else
+      [[ -f "$PORTS_STATE" ]] && awk -F'\t' -v n="$pn" '$1==n{printf "127.0.0.1:%s->%s/tcp\n",$2,$3}' "$PORTS_STATE" || true
+    fi
     ;;
 
   stop)  exists "$1" || not_found "$1"; set_status "$1" stopped; echo "stopped $1" ;;
 
   rm)
-    n="${1:?rm needs a name}"
-    exists "$n" || not_found "$n"
-    tmp="$(mktemp)"; awk -F'\t' -v n="$n" '$1!=n' "$STATE" >"$tmp"; mv "$tmp" "$STATE"
-    echo "removed $n"
+    # Mirrors the real CLI: removal REQUIRES confirmation; --force skips the
+    # prompt (and deletes even if in use). Without --force and no TTY we refuse,
+    # exactly like a non-interactive `sbx rm` on the host. SBX_STUB_RM_FAIL=1
+    # forces a failure so callers' error-surfacing can be tested.
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      cat <<'EOF'
+Remove one or more sandboxes and all associated resources.
+Removal requires confirmation; use --force to skip confirmation prompts
+(for non-interactive scripts) and to delete a sandbox that is in use.
+Usage:  sbx rm [SANDBOX...] [flags]
+Flags:
+      --all     Remove all sandboxes
+  -f, --force   Skip confirmation prompts and delete even if in use
+EOF
+      exit 0
+    fi
+    force=0; rmnames=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -f|--force) force=1; shift ;;
+        -*) shift ;;                 # --all etc. not modeled (untested)
+        *) rmnames+=("$1"); shift ;;
+      esac
+    done
+    [[ ${#rmnames[@]} -gt 0 ]] || { echo "ERROR: rm needs a name" >&2; exit 1; }
+    for n in "${rmnames[@]}"; do exists "$n" || not_found "$n"; done
+    if [[ "${SBX_STUB_RM_FAIL:-0}" == 1 ]]; then
+      echo "Error: could not remove sandbox (simulated failure)" >&2; exit 1
+    fi
+    if [[ "$force" != 1 && ! -t 0 ]]; then
+      echo "Error: removal requires confirmation; re-run with --force to skip the prompt" >&2
+      exit 1
+    fi
+    for n in "${rmnames[@]}"; do
+      tmp="$(mktemp)"; awk -F'\t' -v n="$n" '$1!=n' "$STATE" >"$tmp"; mv "$tmp" "$STATE"
+      echo "removed $n"
+    done
     ;;
 
   setup)   echo "host configuration prepared"; exit 0 ;;
@@ -171,7 +239,7 @@ EOF
     cat <<EOF
 sbx — Docker Sandboxes (stub)
 Usage: sbx <command> [args]
-Commands: version ls run create exec stop rm setup ssh diagnose daemon
+Commands: version ls run create exec ports stop rm setup ssh diagnose daemon
 EOF
     ;;
   *) echo "sbx: unknown command '$cmd'" >&2; exit 1 ;;

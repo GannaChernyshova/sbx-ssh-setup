@@ -21,7 +21,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$host" in
-  *.sbx) : ;;                 # known sandbox host
+  *.sbx)  : ;;                # sandboxd-SSH host (Cursor path)
+  sbx-*)  : ;;                # VS Code loopback alias (real sshd path)
   *) echo "ssh: unknown host $host" >&2; exit 255 ;;
 esac
 

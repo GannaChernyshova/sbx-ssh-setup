@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Stub `code` (VS Code) CLI for tests. Records how it is launched (--remote or
+# --folder-uri) and emulates --list-extensions / --version / --install-extension
+# so the Remote-SSH open path can be exercised without a real VS Code.
+#
+#   SBX_STUB_NO_REMOTE_SSH=1  -> pretend the Remote-SSH extension is missing.
+set -euo pipefail
+LOG="${SBX_STUB_CODE_LOG:-${TMPDIR:-/tmp}/sbx-stub-code.log}"
+
+case "${1:-}" in
+  --list-extensions)
+    if [[ "${SBX_STUB_NO_REMOTE_SSH:-0}" == 1 ]]; then
+      printf '%s\n' "ms-python.python"
+    else
+      printf '%s\n' "ms-python.python" "ms-vscode-remote.remote-ssh"
+    fi
+    ;;
+  --version)
+    # Real `code --version` prints: version, commit hash, arch — one per line.
+    printf '%s\n%s\n%s\n' "1.90.0" "deadbeefcafe1234567890" "arm64"
+    ;;
+  --install-extension)
+    echo "code (stub): would install ${2:-}"
+    ;;
+  *)
+    printf '%s\n' "$*" >>"$LOG"
+    echo "code (stub): $*"
+    ;;
+esac

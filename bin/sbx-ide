@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# sbx-ide — open an IDE inside a Docker Sandbox, safely. One command, several
+# subcommands:
+#
+#   sbx-ide open <path> [--cursor|--vscode] [--name <name>]
+#   sbx-ide set-default <cursor|vscode>
+#   sbx-ide doctor [--target cursor|vscode]
+#   sbx-ide ls
+#   sbx-ide clean [--yes]
+#
+# The toolkit wraps IDE-in-sandbox workflows and nothing else. It deliberately
+# does NOT squat on the bare `sbx-*` namespace the product itself may claim
+# (e.g. a future `sbx ssh <ide>`); the old sbx-open/sbx-doctor/sbx-ls/sbx-clean
+# names survive only as thin deprecated shims that forward here.
+#
+set -euo pipefail
+
+# --- locate our libs (works from the repo and from an installed prefix) ----
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do _self="$(readlink "$_self")"; done
+_bindir="$(cd "$(dirname "$_self")" && pwd)"
+for _cand in "${SBX_IDE_LIB:-}" "${SBX_CURSOR_LIB:-}" \
+             "$_bindir/../lib/sbx-ide" "$_bindir/../lib/sbx-cursor" "$_bindir/../lib"; do
+  if [[ -n "$_cand" && -f "$_cand/common.sh" ]]; then _LIB="$_cand"; break; fi
+done
+[[ -n "${_LIB:-}" ]] || { echo "sbx-ide: cannot locate lib/ (common.sh)" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+source "$_LIB/common.sh"
+# shellcheck source=lib/sbx-interface.sh
+source "$_LIB/sbx-interface.sh"
+# shellcheck source=lib/config.sh
+source "$_LIB/config.sh"
+# shellcheck source=lib/targets.sh
+source "$_LIB/targets.sh"
+
+PROG="sbx-ide"
+export SBX_IDE_PROG="$PROG"   # subcommands render usage under the parent name
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} — open an IDE in a Docker Sandbox, safely
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG <command> [args]
+
+${C_BOLD}COMMANDS${C_RESET}
+  open <path> [--cursor|--vscode] [--name <name>]
+                      Create/reuse one sandbox for <path> and open it in the
+                      chosen IDE, already connected to the mounted folder.
+  set-default <cursor|vscode>
+                      Set the default IDE target (set it once, drop the flag).
+                      With no argument, prints the current default and source.
+  doctor [--target cursor|vscode]
+                      Health checks + host-assumption verification (--verify).
+  ls                  List sandboxes; flag orphans/stopped; print copy/paste.
+  clean [--yes]       Remove orphan/stopped sandboxes.
+
+${C_BOLD}TARGET RESOLUTION${C_RESET} (highest precedence first)
+  --cursor/--vscode flag  >  \$SBX_IDE_TARGET  >  config default  >  cursor
+
+${C_BOLD}EXAMPLES${C_RESET}
+  $PROG open /path/to/proj
+  cd /path/to/proj && $PROG open ./
+  $PROG set-default vscode
+  $PROG open ./ --cursor          # override the default for one run
+
+Run '$PROG <command> --help' for command-specific help.
+EOF
+}
+
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift || true
+
+case "$cmd" in
+  -h|--help|"") usage; exit 0 ;;
+  -V|--version) printf '%s %s\n' "$PROG" "$(toolkit_version)"; exit 0 ;;
+  open|set-default|doctor|ls|clean)
+    fn="cmd_${cmd//-/_}"
+    # shellcheck source=/dev/null
+    source "$_LIB/cmd-${cmd}.sh"
+    "$fn" "$@"
+    ;;
+  *)
+    err "unknown command: $cmd"
+    hint "run '$PROG --help' for the command list"
+    exit 2
+    ;;
+esac
