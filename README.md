@@ -61,6 +61,18 @@ sbx-ide set-default vscode      # now `sbx-ide open ./` uses VS Code, no flag ne
 
 Target resolution order (highest precedence first): **`--cursor`/`--vscode` flag → `$SBX_IDE_TARGET` → config default → `cursor`**. The default lives in `~/.config/sbx-ide/config` (XDG-respecting, `0600`).
 
+### Choose the agent the sandbox runs
+
+Cursor ships its own in-IDE agent, so a plain `shell` sandbox is all it needs. **Vanilla VS Code doesn't** — so you'll often want an sbx agent (e.g. `claude`) running *inside* the sandbox to get an agent in the editor's terminal:
+
+```bash
+sbx-ide set-default --agent claude --vscode   # VS Code sandboxes run the claude agent
+sbx-ide open ~/src/acme-api --vscode           # …and now this box has Claude in it
+sbx-ide open ~/src/acme-api --agent gemini     # or override per run
+```
+
+Agent resolution order: **`--agent` flag → `$SBX_AGENT_CURSOR`/`$SBX_AGENT_VSCODE` → config (`agent_cursor`/`agent_vscode`) → `$SBX_DEFAULT_AGENT` (default `shell`)**. `set-default --agent <name>` with no `--cursor`/`--vscode` applies to both. Known agents: `claude codex copilot cursor gemini shell` (confirm with `sbx run --help`).
+
 ## Support matrix
 
 | IDE | Status | Mechanism |

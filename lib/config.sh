@@ -109,6 +109,28 @@ ssh_config_our_aliases() {
   sed -nE "s/^${SBX_SSH_BLOCK_BEGIN} (.*)$/\1/p" "$f"
 }
 
+# --- Per-target agent resolution ------------------------------------------
+# Which sbx agent/template the sandbox RUNS. Cursor brings its own IDE agent, so
+# `shell` is fine; vanilla VS Code doesn't, so you may want e.g. `claude` in the
+# box. Precedence (highest first):
+#   1. --agent <name> flag           (this run)
+#   2. SBX_AGENT_<TARGET> env         (e.g. SBX_AGENT_VSCODE)
+#   3. config  agent_<target>         (persisted, per target)
+#   4. SBX_DEFAULT_AGENT              (env, or the built-in 'shell')
+#
+# resolve_agent <target> [flag] : prints "<agent>\t<source>" (source ∈
+# flag|env|config|default). Callers split on the tab.
+resolve_agent() {
+  local target="$1" flag="${2:-}" tvar tenv cfg
+  if [[ -n "$flag" ]]; then printf '%s\tflag\n' "$flag"; return 0; fi
+  tvar="SBX_AGENT_$(printf '%s' "$target" | tr '[:lower:]' '[:upper:]')"
+  tenv="${!tvar:-}"
+  if [[ -n "$tenv" ]]; then printf '%s\tenv\n' "$tenv"; return 0; fi
+  cfg="$(config_get "agent_${target}")"
+  if [[ -n "$cfg" ]]; then printf '%s\tconfig\n' "$cfg"; return 0; fi
+  printf '%s\tdefault\n' "$SBX_DEFAULT_AGENT"
+}
+
 # source_label <source> : human phrasing for a resolution source.
 source_label() {
   case "$1" in

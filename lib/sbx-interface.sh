@@ -49,12 +49,17 @@
 : "${SBX_MIN_VERSION:=0.35}"   # SSH-to-sandbox support landed in 0.35.
 
 # --- Agent / template -----------------------------------------------------
-# The agent Cursor connects to. `shell` is the general-purpose environment the
-# IDE SSHes into. NOTE: `sbx run --help` also lists a dedicated `cursor` agent;
-# switch the default with SBX_DEFAULT_AGENT=cursor if that is the intended IDE
-# agent on your host. VERIFY-ON-HOST: confirm the chosen agent in
-# `sbx run --help` (Available agents: …).
+# The sbx agent the sandbox RUNS. `shell` is a plain environment the IDE opens
+# into. Cursor ships its own in-IDE agent, so `shell` is fine there; vanilla
+# VS Code doesn't, so you may want an sbx agent (e.g. `claude`) IN the box —
+# choose per target with `--agent`, $SBX_AGENT_<TARGET>, or
+# `sbx-ide set-default --agent <name> [--cursor|--vscode]`. This is the GLOBAL
+# floor when nothing more specific is set. VERIFY-ON-HOST: confirm the chosen
+# agent in `sbx run --help` (Available agents: …).
 : "${SBX_DEFAULT_AGENT:=shell}"
+# Known agents (for a soft hint if you set an unrecognized one; the real list is
+# `sbx run --help`). Space-separated. VERIFY-ON-HOST.
+: "${SBX_KNOWN_AGENTS:=claude codex copilot cursor gemini shell}"
 
 # --- SSH host suffix ------------------------------------------------------
 # `sbx setup ssh` writes an SSH config making sandboxes reachable as

@@ -228,6 +228,37 @@ uri="$(SBX_IDE_TARGET=cursor sbx-ide open "$WORK/proj" --vscode --print-uri 2>/d
 check "flag overrides env + config"            "grep -q 'ssh-remote+sbx-proj' <<< \"$uri\""
 reset_cfg
 
+echo "== sbx-ide: per-target agent selection =="
+reset_cfg; seed; mkdir -p "$WORK/proj"
+arun="$WORK/agent-run.log"
+# default agent is shell
+: > "$arun"; SBX_STUB_RUN_LOG="$arun" sbx-ide open "$WORK/proj" >/dev/null 2>&1
+check "default agent is shell"        "grep -q 'detached shell' '$arun'"
+# --agent flag wins
+seed; : > "$arun"; SBX_STUB_RUN_LOG="$arun" sbx-ide open "$WORK/proj" --agent gemini >/dev/null 2>&1
+check "--agent flag wins"             "grep -q 'detached gemini' '$arun'"
+# set-default --agent claude --vscode  (scoped)
+reset_cfg
+sbx-ide set-default --agent claude --vscode >/dev/null 2>&1
+check "config records agent_vscode"   "grep -q 'agent_vscode=claude' '$XDG_CONFIG_HOME/sbx-ide/config'"
+check "did NOT set agent_cursor"       "! grep -q 'agent_cursor' '$XDG_CONFIG_HOME/sbx-ide/config'"
+seed; : > "$arun"; SBX_STUB_RUN_LOG="$arun" sbx-ide open "$WORK/proj" --vscode >/dev/null 2>&1
+check "vscode uses configured claude"  "grep -q 'detached claude' '$arun'"
+seed; : > "$arun"; SBX_STUB_RUN_LOG="$arun" sbx-ide open "$WORK/proj" --cursor >/dev/null 2>&1
+check "cursor still shell (scoped)"    "grep -q 'detached shell' '$arun'"
+# env overrides config
+seed; : > "$arun"; SBX_STUB_RUN_LOG="$arun" SBX_AGENT_VSCODE=copilot sbx-ide open "$WORK/proj" --vscode >/dev/null 2>&1
+check "SBX_AGENT_VSCODE beats config"  "grep -q 'detached copilot' '$arun'"
+# set-default --agent with no scope sets both
+reset_cfg
+sbx-ide set-default --agent gemini >/dev/null 2>&1
+check "no-scope sets agent_cursor"     "grep -q 'agent_cursor=gemini' '$XDG_CONFIG_HOME/sbx-ide/config'"
+check "no-scope sets agent_vscode"     "grep -q 'agent_vscode=gemini' '$XDG_CONFIG_HOME/sbx-ide/config'"
+# report shows per-target agents
+out="$(sbx-ide set-default 2>&1)"
+check "report lists a per-target agent" "grep -q 'agent (vscode): gemini' <<< \"\$out\""
+reset_cfg
+
 echo "== deprecated shims forward + warn on stderr =="
 seed; mkdir -p "$WORK/proj"; reset_cursor
 err="$(sbx-open "$WORK/proj" 2>&1 >/dev/null)"

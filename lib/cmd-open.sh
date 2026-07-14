@@ -27,7 +27,8 @@ ${C_BOLD}OPTIONS${C_RESET}
   --cursor            Open in Cursor (default unless a different default is set).
   --vscode            Open in VS Code (via Dev Containers attach, never SSH).
   --name <name>       Sandbox name (default: derived from the directory name).
-  --agent <agent>     Agent/template to run (default: ${SBX_DEFAULT_AGENT}).
+  --agent <agent>     sbx agent/template the sandbox runs (e.g. shell, claude).
+                      Per-target default via '${SBX_IDE_PROG:-sbx-ide} set-default --agent'.
   --no-open           Prepare/verify the sandbox but do not launch the IDE.
   --print-uri         Print the IDE folder URI and exit.
   --dry-run           Show what would happen; make no changes.
@@ -47,7 +48,7 @@ EOF
   }
 
   # --- argument parsing ----------------------------------------------------
-  local PATH_ARG="" NAME="" AGENT="$SBX_DEFAULT_AGENT"
+  local PATH_ARG="" NAME="" AGENT_FLAG=""
   local NO_OPEN=0 PRINT_URI=0 DRY_RUN=0 TARGET_FLAG=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,7 +56,7 @@ EOF
       --cursor)  TARGET_FLAG="cursor"; shift ;;
       --vscode)  TARGET_FLAG="vscode"; shift ;;
       --name)    NAME="${2:?--name needs a value}"; shift 2 ;;
-      --agent)   AGENT="${2:?--agent needs a value}"; shift 2 ;;
+      --agent)   AGENT_FLAG="${2:?--agent needs a value}"; shift 2 ;;
       --no-open|--no-cursor) NO_OPEN=1; shift ;;   # --no-cursor: back-compat
       --print-uri) PRINT_URI=1; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
@@ -71,6 +72,11 @@ EOF
   IFS=$'\t' read -r TARGET _ < <(resolve_target "$TARGET_FLAG")
   target_known "$TARGET" || die "unknown IDE target: '$TARGET' (known: $SBX_IDE_TARGETS)"
   local label; label="$("target_${TARGET}_label")"
+
+  # Resolve which sbx agent the sandbox runs for THIS target (flag > env >
+  # config > SBX_DEFAULT_AGENT). Applied on CREATE only (a wake reuses the spec).
+  local AGENT AGENT_SRC
+  IFS=$'\t' read -r AGENT AGENT_SRC < <(resolve_agent "$TARGET" "$AGENT_FLAG")
 
   # --- preflight -----------------------------------------------------------
   sbx_present || die "'$SBX_BIN' not found on PATH. Install the sbx CLI, then run: ${SBX_IDE_PROG:-sbx-ide} doctor"
@@ -194,7 +200,7 @@ EOF
     if [[ "$DRY_RUN" == 1 ]]; then
       info "[dry-run] would create (detached): $(sbx_ensure_running_cmd "$AGENT" "$NAME" "$WS" ${run_extra[@]+"${run_extra[@]}"})"
     else
-      info "Creating sandbox ${C_BOLD}$NAME${C_RESET} (agent: $AGENT, workspace: $WS, detached)"
+      info "Creating sandbox ${C_BOLD}$NAME${C_RESET} (agent: $AGENT [$AGENT_SRC], workspace: $WS, detached)"
       sbx_ensure_running "$AGENT" "$NAME" "$WS" ${run_extra[@]+"${run_extra[@]}"}
       created=1
     fi

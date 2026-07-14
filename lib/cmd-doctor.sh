@@ -165,6 +165,11 @@ EOF
     # 6. user preference (config)
     heading "Preferences"
     ok "default IDE target: $default_target ${C_DIM}($(source_label "$default_source"))${C_RESET}"
+    local at aagent asrc
+    for at in $SBX_IDE_TARGETS; do
+      IFS=$'\t' read -r aagent asrc < <(resolve_agent "$at" "")
+      ok "agent ($at): $aagent ${C_DIM}[$asrc]${C_RESET}"
+    done
     local cf; cf="$(config_file)"
     if [[ -f "$cf" ]]; then hint "config file: $cf"; else hint "config file: $cf (not created yet; run '${SBX_IDE_PROG:-sbx-ide} set-default')"; fi
 

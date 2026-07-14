@@ -50,7 +50,10 @@ ${C_BOLD}COMMANDS${C_RESET}
                       chosen IDE, already connected to the mounted folder.
   set-default <cursor|vscode>
                       Set the default IDE target (set it once, drop the flag).
-                      With no argument, prints the current default and source.
+  set-default --agent <name> [--cursor|--vscode]
+                      Set the sbx agent the sandbox runs (e.g. claude for VS Code,
+                      which has no built-in agent). No scope = all targets.
+                      With no argument, prints current defaults and their source.
   doctor [--target cursor|vscode]
                       Health checks + host-assumption verification (--verify).
   ls                  List sandboxes; flag orphans/stopped; print copy/paste.

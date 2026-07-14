@@ -85,6 +85,13 @@ channel is sub-millisecond — the exec-per-channel cost simply isn't in the pat
   `open --vscode` detects this (the kit's sshd drop-in is absent) and tells you
   to recreate it (`sbx rm --force <name> && sbx-ide open <ws> --vscode`) rather
   than failing cryptically. It never removes the sandbox for you.
+- **Getting an agent into VS Code.** Unlike Cursor, vanilla VS Code has no
+  built-in agent, so a plain `shell` sandbox gives you an isolated editor but no
+  in-box AI. Point the sandbox at an sbx agent to fix that:
+  `sbx-ide set-default --agent claude --vscode` (or `--agent <name>` per run) —
+  then the sandbox runs that agent and it's available in the VS Code terminal.
+  Alternatively install an agent extension (Copilot, Continue, …) into the
+  remote server. The agent applies on **create**; recreate to change it.
 - **No fallback.** If the key is missing, the port can't be published, or our
   sshd's port never opens, `open --vscode` fails with an explanation — it never
   silently drops to sandboxd's SSH.
