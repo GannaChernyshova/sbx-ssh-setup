@@ -16,6 +16,10 @@ if ([string]::IsNullOrEmpty($Name)) {
 
 Write-Host "==> Removing sandbox '$Name' (stops it and deletes its resources)..."
 sbx rm $Name
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "X Failed to remove '$Name' (sbx exit code $LASTEXITCODE)." -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 Write-Host "OK Removed '$Name'."
 
 # Remove the concrete SSH alias the setup script added for Codex discovery.

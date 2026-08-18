@@ -4,9 +4,14 @@ set -euo pipefail
 # Ensure Homebrew binaries are on PATH (required on Apple Silicon Macs)
 export PATH="/opt/homebrew/bin:$PATH"
 
-MIN_SBX_VERSION="0.35.0"
+MIN_SBX_VERSION="0.38.0"
 
 die() { echo "✗ $*" >&2; exit 1; }
+
+# Quote one value for the POSIX shell used by the remote SSH server.
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 
 # Return 0 if version $1 >= $2 (portable; BSD/macOS sort lacks -V).
 version_ge() {
@@ -33,6 +38,7 @@ echo "==> Preflight checks..."
 
 command -v sbx >/dev/null 2>&1 || die "The 'sbx' CLI is not installed or not on PATH.
    Install Docker Sandboxes: https://docs.docker.com/ai/sandboxes/get-started/"
+command -v ssh >/dev/null 2>&1 || die "The OpenSSH client ('ssh') is not installed or not on PATH."
 
 SBX_VERSION="$({ sbx version 2>/dev/null || sbx --version 2>/dev/null || true; } \
   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
@@ -69,41 +75,45 @@ fi
 echo "==> AI agent          : $AGENT"
 echo ""
 
-# ── One-time setup: enable features + restart daemon ────────────────────────
-FLAG_FILE="$HOME/.sbx_features_enabled"
+# ── One-time setup: Docker login + agent auth + SSH ────────────────────
+# A v0.38-specific marker migrates users of the legacy experimental-feature flow.
+FLAG_FILE="$HOME/.sbx_0_38_setup_complete"
 
 if [ ! -f "$FLAG_FILE" ]; then
-  echo "==> First-time setup: enabling experimental features..."
-  sbx settings set platform.allowExperimentalFeatures true
-  sbx settings set feature.ssh true
+  echo "==> First-time setup: signing in to Docker..."
+  sbx login
 
-  echo "==> Restarting daemon to apply features..."
-  sbx daemon stop
-  sbx daemon start -d
+  echo "==> Authenticating OpenAI with OAuth..."
+  sbx secret set openai --oauth
 
-  echo "==> Running sbx ssh setup..."
-  sbx ssh setup
+  echo "==> Configuring SSH access..."
+  sbx setup ssh
 
   touch "$FLAG_FILE"
   echo "==> One-time setup complete."
 else
-  echo "==> Experimental features already enabled, skipping one-time setup."
+  echo "==> Docker login, OpenAI OAuth, and SSH setup already completed; skipping."
 fi
 
 # ── 5. Create the sandbox (skip if one with this name already exists) ────────
 echo ""
-if sbx ls 2>/dev/null | grep -qw "$SBX_NAME"; then
+if ! SBX_LIST="$(sbx ls 2>/dev/null)"; then
+  die "sbx ls failed; cannot determine whether sandbox '$SBX_NAME' already exists."
+fi
+if printf '%s\n' "$SBX_LIST" | grep -qw "$SBX_NAME"; then
   echo "==> Sandbox '$SBX_NAME' already exists — skipping creation."
 else
   echo "==> Creating sandbox '$SBX_NAME' with the '$AGENT' template..."
-  sbx run "$AGENT" --name "$SBX_NAME"
+  sbx run --name "$SBX_NAME" "$AGENT"
 fi
 
 # ── 2. Verify SSH connectivity before handing off to the Codex UI ────────────
 HOST="${SBX_NAME}.sbx"
+SSH_CONNECTED=false
 echo ""
 echo "==> Verifying SSH connectivity to $HOST ..."
 if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$HOST" true 2>/dev/null; then
+  SSH_CONNECTED=true
   echo "✓ SSH to $HOST works."
 else
   echo "! Could not reach $HOST over SSH yet."
@@ -149,16 +159,21 @@ echo "==> Registered SSH alias '$HOST' in ~/.ssh/config for Codex auto-discovery
 # in the sandbox; otherwise fall back to the sandbox's default login directory.
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 REMOTE_DIR="$PWD"
-if ! ssh "${SSH_OPTS[@]}" "$HOST" "test -d \"$REMOTE_DIR\"" 2>/dev/null; then
-  ALT_DIR="$(ssh "${SSH_OPTS[@]}" "$HOST" 'pwd' 2>/dev/null | tr -d '\r')"
+REMOTE_DIR_QUOTED="$(shell_quote "$REMOTE_DIR")"
+if ! ssh "${SSH_OPTS[@]}" "$HOST" "test -d $REMOTE_DIR_QUOTED" 2>/dev/null; then
+  ALT_DIR="$({ ssh "${SSH_OPTS[@]}" "$HOST" 'pwd' 2>/dev/null || true; } | tr -d '\r')"
   [ -n "$ALT_DIR" ] && REMOTE_DIR="$ALT_DIR"
 fi
-ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p \"$REMOTE_DIR\"" 2>/dev/null || true
-echo "==> Project directory ready in sandbox: $REMOTE_DIR"
+REMOTE_DIR_QUOTED="$(shell_quote "$REMOTE_DIR")"
+if ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p $REMOTE_DIR_QUOTED" 2>/dev/null; then
+  echo "==> Project directory ready in sandbox: $REMOTE_DIR"
+else
+  echo "==> Could not verify the project directory yet; expected path: $REMOTE_DIR"
+fi
 
 # ── Register the connection in the Codex app via its supported deep link ─────
 # codex://settings/connections/ssh/add?name=<alias> — the name must match the
-# Host alias above. This makes the Codex app add/enable the connection without
+# Host alias above. This makes the Codex app add the connection without
 # a manual Settings → Connections → Refresh.
 DEEPLINK="codex://settings/connections/ssh/add?name=${HOST}"
 if command -v open >/dev/null 2>&1; then
@@ -177,9 +192,15 @@ elif command -v xclip >/dev/null 2>&1; then
   printf '%s' "$REMOTE_DIR" | xclip -selection clipboard >/dev/null 2>&1 && CLIP_NOTE="  (copied to clipboard)"
 fi
 
+if [ "$SSH_CONNECTED" = true ]; then
+  STATUS_LINE="✓ Sandbox '$SBX_NAME' is ready and registered for Codex."
+else
+  STATUS_LINE="! Sandbox '$SBX_NAME' is provisioned and registered, but SSH is not ready yet."
+fi
+
 cat <<EOF
 
-✓ Sandbox '$SBX_NAME' is ready and registered for Codex.
+$STATUS_LINE
 
 In Codex, just create the project:
    1. New project → Remote.

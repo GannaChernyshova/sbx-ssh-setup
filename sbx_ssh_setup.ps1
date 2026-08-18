@@ -7,15 +7,26 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
-$MinSbxVersion = [version]"0.35.0"
+$MinSbxVersion = [version]"0.38.0"
 
 function Die($msg) { Write-Host "X $msg" -ForegroundColor Red; exit 1 }
+
+function Invoke-Sbx {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$SbxArgs)
+    & sbx @SbxArgs
+    if ($LASTEXITCODE -ne 0) {
+        Die "sbx $($SbxArgs -join ' ') failed with exit code $LASTEXITCODE."
+    }
+}
 
 # ── 1. Preflight checks ──────────────────────────────────────────────────────
 Write-Host "==> Preflight checks..."
 
 if (-not (Get-Command sbx -ErrorAction SilentlyContinue)) {
     Die "The 'sbx' CLI is not installed or not on PATH. Install Docker Sandboxes: https://docs.docker.com/ai/sandboxes/get-started/"
+}
+if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+    Die "The OpenSSH client ('ssh') is not installed or not on PATH."
 }
 
 $verText = (& sbx version 2>$null)
@@ -54,43 +65,46 @@ if ($SbxName -ne $RawName) {
 Write-Host "==> AI agent          : $Agent"
 Write-Host ""
 
-# ── One-time setup: enable features + restart daemon ────────────────────────
-$FlagFile = Join-Path $HOME ".sbx_features_enabled"
+# ── One-time setup: Docker login + agent auth + SSH ────────────────────
+# A v0.38-specific marker migrates users of the legacy experimental-feature flow.
+$FlagFile = Join-Path $HOME ".sbx_0_38_setup_complete"
 
 if (-not (Test-Path $FlagFile)) {
-    Write-Host "==> First-time setup: enabling experimental features..."
-    sbx settings set platform.allowExperimentalFeatures true
-    sbx settings set feature.ssh true
+    Write-Host "==> First-time setup: signing in to Docker..."
+    Invoke-Sbx login
 
-    Write-Host "==> Restarting daemon to apply features..."
-    sbx daemon stop
-    sbx daemon start -d
+    Write-Host "==> Authenticating OpenAI with OAuth..."
+    Invoke-Sbx secret set openai --oauth
 
-    Write-Host "==> Running sbx ssh setup..."
-    sbx ssh setup
+    Write-Host "==> Configuring SSH access..."
+    Invoke-Sbx setup ssh
 
     New-Item -ItemType File -Path $FlagFile -Force | Out-Null
     Write-Host "==> One-time setup complete."
 } else {
-    Write-Host "==> Experimental features already enabled, skipping one-time setup."
+    Write-Host "==> Docker login, OpenAI OAuth, and SSH setup already completed; skipping."
 }
 
 # ── 5. Create the sandbox (skip if one with this name already exists) ────────
 Write-Host ""
-$existing = (& sbx ls 2>$null | Select-String -SimpleMatch $SbxName)
+$sandboxes = (& sbx ls 2>$null)
+if ($LASTEXITCODE -ne 0) { Die "sbx ls failed with exit code $LASTEXITCODE." }
+$existing = ($sandboxes | Select-String -SimpleMatch $SbxName)
 if ($existing) {
     Write-Host "==> Sandbox '$SbxName' already exists — skipping creation."
 } else {
     Write-Host "==> Creating sandbox '$SbxName' with the '$Agent' template..."
-    sbx run $Agent --name $SbxName
+    Invoke-Sbx run --name $SbxName $Agent
 }
 
 # ── 2. Verify SSH connectivity before handing off to the Codex UI ────────────
 $sbxHost = "$SbxName.sbx"
+$sshConnected = $false
 Write-Host ""
 Write-Host "==> Verifying SSH connectivity to $sbxHost ..."
 & ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 $sbxHost true 2>$null
 if ($LASTEXITCODE -eq 0) {
+    $sshConnected = $true
     Write-Host "OK SSH to $sbxHost works."
 } else {
     Write-Host "! Could not reach $sbxHost over SSH yet."
@@ -142,14 +156,18 @@ Write-Host "==> Registered SSH alias '$sbxHost' in ~/.ssh/config for Codex auto-
 $hostPath   = (Get-Location).Path
 $remoteDir  = $hostPath
 $mountKnown = $true
-& ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost "test -d '$hostPath'" 2>$null
+# Quote paths for the POSIX shell on the remote side. A single quote is encoded
+# as '\'' (end quote, escaped quote, resume quote).
+$hostPathQuoted = "'" + $hostPath.Replace("'", "'\''") + "'"
+& ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost "test -d $hostPathQuoted" 2>$null
 if ($LASTEXITCODE -ne 0) {
     $mountKnown = $false
     $alt = (& ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost 'pwd' 2>$null)
     if ($alt) { $remoteDir = ($alt | Select-Object -First 1).Trim() }
 }
 if ($mountKnown) {
-    & ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost "mkdir -p '$remoteDir'" 2>$null
+    $remoteDirQuoted = "'" + $remoteDir.Replace("'", "'\''") + "'"
+    & ssh -o BatchMode=yes -o ConnectTimeout=10 $sbxHost "mkdir -p $remoteDirQuoted" 2>$null
     Write-Host "==> Project directory ready in sandbox: $remoteDir"
 } else {
     Write-Host "==> Could not map this Windows path into the sandbox; the sandbox's default"
@@ -158,7 +176,7 @@ if ($mountKnown) {
 
 # ── Register the connection in the Codex app via its supported deep link ─────
 # codex://settings/connections/ssh/add?name=<alias> — the name must match the
-# Host alias above. This makes the Codex app add/enable the connection without
+# Host alias above. This makes the Codex app add the connection without
 # a manual Settings -> Connections -> Refresh.
 $deepLink = "codex://settings/connections/ssh/add?name=$sbxHost"
 try { Start-Process $deepLink } catch {}
@@ -169,7 +187,11 @@ try { Set-Clipboard -Value $remoteDir; $clipNote = "  (copied to clipboard)" } c
 $folderLine = if ($mountKnown) { "   3. Set the project folder to:" } else { "   3. Set the project folder (browse from the sandbox default below):" }
 
 Write-Host ""
-Write-Host "OK Sandbox '$SbxName' is ready and registered for Codex."
+if ($sshConnected) {
+    Write-Host "OK Sandbox '$SbxName' is ready and registered for Codex."
+} else {
+    Write-Host "! Sandbox '$SbxName' is provisioned and registered, but SSH is not ready yet."
+}
 Write-Host ""
 Write-Host "In Codex, just create the project:"
 Write-Host "   1. New project -> Remote."

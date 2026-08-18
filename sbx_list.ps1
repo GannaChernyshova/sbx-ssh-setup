@@ -9,5 +9,9 @@ if (-not (Get-Command sbx -ErrorAction SilentlyContinue)) {
 
 Write-Host "==> Sandboxes:"
 sbx ls
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "X 'sbx ls' failed with exit code $LASTEXITCODE." -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 Write-Host ""
 Write-Host "Connect to one over SSH with:  ssh <sandbox-name>.sbx"
