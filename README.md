@@ -19,17 +19,18 @@ Per-agent guides for connecting the desktop UI to the sandbox over SSH:
 
 ## What it does
 
-1. **Preflight:** verifies `sbx` is installed and ≥ 0.35.0, and that Docker is running.
+1. **Preflight:** verifies `sbx` is installed and ≥ 0.38.0, and that Docker is running.
 2. Derives the sandbox name from the current directory (sanitized to lowercase, safe characters).
-3. On first run only (tracked by `~/.sbx_features_enabled`):
-   enables `platform.allowExperimentalFeatures` and `feature.ssh`,
-   restarts the `sbx` daemon, and runs `sbx ssh setup`.
+3. On first run only (tracked by `~/.sbx_0_38_setup_complete`), runs `sbx login`, authenticates
+   OpenAI with `sbx secret set openai --oauth`, and configures SSH with `sbx setup ssh`.
 4. Creates the sandbox from the chosen AI agent template (required first argument), skipping
    creation if a sandbox with that name already exists.
 5. Verifies SSH connectivity.
-6. Registers a concrete `Host <name>.sbx` alias in `~/.ssh/config` so Codex auto-discovers the
-   connection (Codex ignores the pattern-only `Host *.sbx` that `sbx` manages). Settings are
-   inherited from the `sbx`-managed block via `ssh -G`, so nothing is duplicated.
+6. Registers a concrete `Host <name>.sbx` alias in `~/.ssh/config`, then opens Codex's supported
+   SSH-add deep link so Codex imports the connection. Settings are inherited from the
+   `sbx`-managed `Host *.sbx` block, so nothing is duplicated. Codex imports the host with
+   automatic connection disabled, as documented in the
+   [official deep-link reference](https://developers.openai.com/codex/reference/commands#settings).
 7. Pre-provisions the project directory inside the sandbox (the sandbox's start directory) and
    copies its remote path to the clipboard — paste it as the folder when creating the Codex
    Remote Project.
@@ -46,8 +47,13 @@ The teardown scripts remove that `~/.ssh/config` alias when they remove the sand
 ## Requirements
 
 - `sbx` CLI installed and on `PATH` — see [Docker Sandboxes: Get started](https://docs.docker.com/ai/sandboxes/get-started/).
+- An OpenSSH client (`ssh`) installed and on `PATH`.
 - macOS/Linux: `bash` (macOS also assumes Homebrew at `/opt/homebrew/bin`).
 - Windows: PowerShell 5.1+.
+
+The first setup run is interactive: `sbx login` and OpenAI OAuth may open a browser and wait for
+you to finish authentication. The completion marker is created only after all three one-time
+commands succeed.
 
 ## Usage
 
@@ -76,7 +82,8 @@ Then connect:
 ssh <directory-name>.sbx
 ```
 
-To re-run the one-time setup: `rm ~/.sbx_features_enabled` (Windows: `del %USERPROFILE%\.sbx_features_enabled`).
+To re-run login, OpenAI OAuth, and SSH setup, remove `~/.sbx_0_38_setup_complete` (Windows:
+`del %USERPROFILE%\.sbx_0_38_setup_complete`) and run the setup script again.
 
 ## Managing sandboxes
 

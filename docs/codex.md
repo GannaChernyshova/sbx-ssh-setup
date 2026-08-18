@@ -8,7 +8,7 @@ sandboxed workspace as a Remote Project.
 
 ## Prerequisites
 
-- `sbx` 0.35.0+
+- `sbx` 0.38.0+
 
 ## One-time — authenticate with OpenAI (SSO)
 
@@ -16,17 +16,20 @@ Codex needs OpenAI credentials to run in the sandbox. Authenticate **once per ma
 OpenAI SSO account (global secret, shared by every sandbox):
 
 ```bash
-sbx secret set -g openai --oauth
+sbx login
+sbx secret set openai --oauth
+sbx setup ssh
 ```
 
-This opens a browser to complete SSO login. You only need to do this once; you don't repeat it per
-project. (If Codex connects but nothing happens when you run a task, this step was skipped.)
+These commands sign in to Docker, open a browser to complete OpenAI SSO, and configure SSH. The
+setup scripts run them for you once per machine. (If Codex connects but nothing happens when you
+run a task, reset the one-time marker as described in the README and run the script again.)
 
 ## Step 1 — Create the sandbox
 
-`sbx_ssh_setup.sh` / `sbx_ssh_setup.ps1` handles everything in one call: on first run it enables
-the SSH feature (`platform.allowExperimentalFeatures`, `feature.ssh`), restarts the daemon, and
-runs `sbx ssh setup` (once); on every run it creates the sandbox for the chosen agent.
+`sbx_ssh_setup.sh` / `sbx_ssh_setup.ps1` handles everything in one call: on first run it performs
+Docker login, OpenAI OAuth, and `sbx setup ssh`; on every run it creates the sandbox for the chosen
+agent.
 
 From your project directory, run it with the `codex` agent:
 
@@ -41,9 +44,11 @@ verifying SSH connectivity, the script now also:
 - **Registers the SSH connection for you.** It writes a concrete `Host <sandbox-name>.sbx` alias
   into `~/.ssh/config` (Codex only reads *concrete* aliases and ignores the pattern-only
   `Host *.sbx` that `sbx` manages), then opens the Codex deep link
-  `codex://settings/connections/ssh/add?name=<sandbox-name>.sbx` so the app adds/enables the
+  `codex://settings/connections/ssh/add?name=<sandbox-name>.sbx` so the app imports the
   connection without a manual Refresh. Connection settings are still inherited from the
-  `sbx`-managed block via `ssh -G` — nothing is duplicated.
+  `sbx`-managed block via `ssh -G` — nothing is duplicated. Per the
+  [official Codex deep-link reference](https://developers.openai.com/codex/reference/commands#settings),
+  Codex imports the host with automatic connection disabled.
 - **Pre-provisions the project directory** inside the sandbox (the same directory the sandbox was
   started from) and copies its exact remote path to your clipboard for Step 3.
 
